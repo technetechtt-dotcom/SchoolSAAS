@@ -87,3 +87,17 @@ Existing login sessions from previous releases will no longer be accepted becaus
 
 ### Still outstanding
 Multi-factor authentication, verified email invitations and password recovery, network-level rate limits, tenant-safe relational constraints, database migration framework, session/device management screen, full end-to-end browser tests, commercial billing, incident lifecycle and POPIA compliance assessment are not yet complete.
+
+## v0.5 development increment
+- Added school-scoped guardian contacts, append-only case timeline notes, explicit case status/assignment history, owner-assigned follow-ups, and multi-class staff assignments.
+- Added database-paginated incident/case directories, SQL-aggregated dashboard totals, filtered incident reports by date/grade/class and corresponding frontend views.
+- Added a fresh-install Alembic schema baseline. Existing populated deployments need a separate reconciled migration plan; do not assume stamp or create_all is a valid upgrade.
+- Added an SMTP-configured one-use password recovery flow. SMTP_HOST, SMTP_PORT (default 465), SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM and APP_PUBLIC_URL must be configured; no email tokens are displayed through API responses.
+- Added Chromium Playwright browser smoke test for registration, learner creation, mobile navigation and logout. CI tests its results separately from Python API checks.
+- Added operations, multi-class and recovery regression tests.
+
+### Important unimplemented items
+Do not use with identifiable child data until POPIA, safeguarding and security assessments are complete. The following remain unfinished: MFA, verified school provisioning, parent portal, delivery/acknowledgement workflows, actual PDF/Word letter templates, full Code of Conduct/versioning and disciplinary hearings, comprehensive evidence storage, payment gateway and invoicing, platform-owner console, formal PostgreSQL tenant enforcement, backup restoration validation, data retention automation and independent penetration testing.
+
+### Deployment caution
+Only new fresh development or staging databases should run the baseline Alembic revision automatically. Populated legacy databases need a reviewed migration and tested backup. SCHEMA_AUTO_CREATE=false disables automatic startup schema creation. Use COOKIE_SECURE=true behind TLS.
