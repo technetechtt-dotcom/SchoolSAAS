@@ -220,7 +220,12 @@ def current(request: Request, session: Session=Depends(db)):
     school = session.get(School, sid)
     user=session.get(User,uid)
     if not membership or not membership.active or not user or not user.active or not school or school.status!='active': raise HTTPException(403, 'School access denied')
-    return {'uid':uid,'sid':sid,'role':membership.role,'school':school.name,'assigned_class':membership.assigned_class}
+    assigned=[membership.assigned_class] if membership.assigned_class else []
+    from app.operations import ClassAssignment
+    assigned+=list(session.scalars(select(ClassAssignment.class_name).where(
+        ClassAssignment.school_id==sid,ClassAssignment.user_id==uid)).all())
+    return {'uid':uid,'sid':sid,'role':membership.role,'school':school.name,
+            'assigned_class':membership.assigned_class,'assigned_classes':sorted(set(assigned))}
 
 def require(*roles):
     def dependency(ctx=Depends(current)):
@@ -330,8 +335,8 @@ def me(request: Request, session: Session = Depends(db)):
 def learners(s:Session=Depends(db),ctx=Depends(current)):
     q=select(Learner).where(Learner.school_id==ctx['sid'])
     if ctx['role']=='educator':
-        if not ctx['assigned_class']:return []
-        q=q.where(Learner.class_name==ctx['assigned_class'])
+        if not ctx['assigned_classes']:return []
+        q=q.where(Learner.class_name.in_(ctx['assigned_classes']))
     return [dict(id=x.id,admission_no=x.admission_no,name=x.first_name+' '+x.surname,grade=x.grade,class_name=x.class_name) for x in s.scalars(q.order_by(Learner.surname).limit(500)).all()]
 @app.post('/api/learners',status_code=201)
 def add_learner(data:LearnerIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
@@ -354,7 +359,7 @@ def add_incident(data:IncidentIn,s:Session=Depends(db),ctx=Depends(require('scho
     learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
     offence=s.scalar(select(Offence).where(Offence.id==data.offence_id,Offence.school_id==ctx['sid']))
     if not learner or not offence: raise HTTPException(404,'Learner or offence not found at this school')
-    if ctx['role']=='educator' and (not ctx['assigned_class'] or learner.class_name!=ctx['assigned_class']):raise HTTPException(403,'Learner is outside your assigned class')
+    if ctx['role']=='educator' and learner.class_name not in ctx['assigned_classes']:raise HTTPException(403,'Learner is outside your assigned classes')
     i=Incident(school_id=ctx['sid'],reporter_id=ctx['uid'],**data.model_dump());s.add(i);s.flush()
     same=s.scalar(select(func.count()).select_from(Incident).where(Incident.school_id==ctx['sid'],Incident.learner_id==i.learner_id,Incident.offence_id==i.offence_id,Incident.status!='withdrawn'))
     setting=s.scalar(select(SchoolSetting.value).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
