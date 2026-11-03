@@ -115,7 +115,7 @@ async function learnerDirectory(){
  const state=directoryState;
  const response=await api("directory/learners?limit=50&offset="+state.offset+"&q="+encodeURIComponent(state.q));
  state.total=response.total;
- $("page").innerHTML=head("Learners","Search and manage learner records across all grades",user.role==="educator"?"":btn("Add learner","create-learner","",false))+
+ $("page").innerHTML=head("Learners","Search and manage learner records across all grades",user.role==="educator"?"":btn("Add learner","create-learner","",false)+(admin()?btn("Import CSV","import-learners"):""))+
  panel('<div class="search-row"><input id="directory-query" type="search" placeholder="Name, admission number or class" aria-label="Search learners" value="'+esc(state.q)+'"><span class="result">'+esc(state.total)+' learner records</span></div><div id="learner-records">'+
  table(["Learner","Admission","Grade","Class"],response.items.map(x=>[link(x.name,"learners",x.id),plain(x.admission_no),plain(x.grade),plain(x.class_name)]))+'</div>'+
  '<div class="toolbar" style="margin-top:14px"><span class="subtle">Showing '+(response.total?state.offset+1:0)+'–'+Math.min(state.offset+50,state.total)+' of '+state.total+'</span><div class="actions">'+
@@ -194,8 +194,9 @@ async function reports(){
  '<div class="grid2">'+panel(bars(r.by_grade),"Incidents by grade")+panel(bars(r.by_offence),"Incidents by offence")+'</div>'+panel(bars(stats.months),"Monthly trend")+'<div class="grid2">'+panel(make("by_grade"),"Grade totals")+panel(make("by_offence"),"Offence totals")+'</div>'+panel(make("by_location"),"By location");
 }
 async function settings(){
- const d=await api("settings");$("page").innerHTML=head("School settings","Configure reviewed behaviour thresholds")+
- panel(jsonForm("settings",input("repeat_threshold","Repeat incident review threshold","number",d.repeat_threshold,'min="2" max="10" required')));
+ const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);$("page").innerHTML=head("School settings","Manage reviewed behaviour thresholds and academic context")+
+ panel(jsonForm("settings",input("repeat_threshold","Repeat incident review threshold","number",d.repeat_threshold,'min="2" max="10" required')),"Behaviour review")+
+ panel(jsonForm("academic",input("academic_year","Academic year","number",acad.academic_year,'min="2020" max="2100" required')+input("term","Current term (1–4)","number",acad.term,'min="1" max="4" required')+input("school_contact_email","School contact email","email",acad.school_contact_email)),"Academic year and school contact");
 }
 async function subscription(){
  const d=await api("subscription");$("page").innerHTML=head("Subscription","Account status and billing availability")+
@@ -227,6 +228,7 @@ async function openAction(action,id){
  const learners=async()=>choices(await schoolLearners(),"id","name");
  const incidents=async()=>choices(await api("incidents"),"id","id").map(x=>[x[0],"Incident #"+x[0]]);
  switch(action){
+ case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. File must contain headers: admission_no, first_name, surname, grade, class_name. Duplicates are skipped; maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
  case "create-learner":name="New learner";kind="learners";body=input("admission_no","Admission number","text","","required")+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required")+input("class_name","Class","text","","required");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]]);break;
@@ -269,6 +271,18 @@ async function submitForm(f){
  if(prefix==="appeal-update"){url="appeals/"+id;method="PATCH";go="appeals"}
  if(prefix==="appointment-update"){url="appointments/"+id;method="PATCH";go="appointments"}
  if(k==="settings"){url="settings";method="PUT";go="settings"}
+ if(k==="academic"){url="settings/academic";method="PUT";data.academic_year=Number(data.academic_year);data.term=Number(data.term);go="settings"}
+ if(k==="import-learners"){
+   const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a CSV file",true);return}
+   const content=await file.text();
+   const lines=content.replace(/\r/g,"").split("\n").filter(x=>x.trim());
+   const header=lines.shift()?.split(",").map(x=>x.trim().toLowerCase());
+   const expected=["admission_no","first_name","surname","grade","class_name"];
+   if(!header||!expected.every(x=>header.includes(x))){toast("CSV headers must include admission_no,first_name,surname,grade,class_name",true);return}
+   if(lines.length>1000){toast("Maximum 1,000 learner rows per file",true);return}
+   const rows=lines.map(line=>{const parts=line.split(",");return Object.fromEntries(expected.map(x=>[x,(parts[header.indexOf(x)]||"").trim()]))});
+   data={rows};url="learners/import";go="learners";
+ }
  if(k==="cases"){data.incident_ids=Array.from(f.querySelectorAll("[name=linked_incident]:checked")).map(x=>Number(x.value));if(!data.incident_ids.length){toast("Select at least one incident",true);return}go="cases"}
  if(k==="parent-contacts")go="contacts";
  if(k==="invitations")go="staff";
@@ -280,7 +294,7 @@ async function submitForm(f){
  try{const result=await api(url,method,data);close();
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
- toast("Saved successfully");navigate(go);
+ toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");navigate(go);
  }catch(e){toast(e.message,true)}
 }
 async function schoolSelector(){
