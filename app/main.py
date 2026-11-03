@@ -164,7 +164,10 @@ class SchoolSetting(Base):
     value: Mapped[str] = mapped_column(String(200))
 
 @app.on_event('startup')
-def startup(): Base.metadata.create_all(engine)  # replace with Alembic migrations before deployment
+def startup():
+    # Local prototype only; deployment must run Alembic with auto creation disabled.
+    if os.getenv("SCHEMA_AUTO_CREATE","true").lower() == "true":
+        Base.metadata.create_all(engine)
 
 def db():
     with SessionLocal() as s: yield s
