@@ -356,7 +356,7 @@ STAFF_ROLES={'school_admin','principal','smt','hod','educator'}
 @app.get('/api/members')
 def members(s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
     q=select(Membership,User).join(User,Membership.user_id==User.id).where(Membership.school_id==ctx['sid'])
-    return [{'id':m.id,'email':u.email,'role':m.role,'active':m.active,'assigned_class':m.assigned_class} for m,u in s.execute(q).all()]
+    return [{'id':m.id,'user_id':u.id,'email':u.email,'role':m.role,'active':m.active,'assigned_class':m.assigned_class} for m,u in s.execute(q).all()]
 
 @app.post('/api/invitations',status_code=201)
 def invite(data:InviteRequest,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
