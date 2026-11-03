@@ -50,3 +50,26 @@ South African Schools Act and BELA amendments require school-approved codes and 
 Added CSRF double-submit checks, basic security response headers, active memberships, class-scoped educator learner access, restricted navigation, staff invitation/acceptance, learner edits, case status changes, incident review, review tasks for flagged incidents, parent communication records, school-configurable repeat threshold and management summary API.
 
 **Still a development prototype.** Not production safe: no real email delivery, MFA, rate limits, Alembic migrations, complete relational tenant constraints, full backup/recovery tests, consent/retention workflows, billing, or external audit. Existing databases require schema migration before upgrading; do not run against real records. Use fictitious learner data only.
+
+
+## v0.3 navigation and school operations (3 November 2026)
+- Replaced the prototype navigation with grouped, role-aware menus, hash URLs, responsive mobile navigation and searchable data views.
+- Learner directory supports server-side search and 50-record pages, including schools with more than 500 learners.
+- Added learner profiles, incident details/review, case details/assignment/status, staff editing/invitation acceptance, intervention outcomes, review-task actions, appeals, parent contacts, meeting scheduling and document draft records.
+- Added school switching for authorised multi-school memberships.
+- Dashboards and reports now show monthly trends, severity and repeat-behaviour summaries, with administrator-only CSV incident export.
+- Added API regression tests and frontend JavaScript syntax checking in GitHub Actions.
+
+### Upgrading an existing v0.2 database
+Back up your database first. Stop the old application, set DATABASE_URL to the existing database and run:
+
+    python scripts/upgrade_v02_to_v03.py
+
+Then start the v0.3 application and verify school data and roles. Never run an untested migration against production data. This script upgrades new columns only and is not a substitute for versioned Alembic migrations.
+
+### Work that remains
+This is still a development prototype, not production-certified or appropriate for genuine learner disciplinary data. Not yet implemented: real invitation email delivery, password recovery, MFA, subscription billing/payment processing, parent accounts/portal, external evidence uploads, PDF/Word letter templates, complete Code of Conduct versioning, scheduled notifications, full tenant-enforcing database constraints/RLS, tamper-resistant audit, backup/restore automation, deployment hardening, accessibility certification and browser-based end-to-end testing.
+Subscriptions are informational; no payments are collected. Document records are drafts and are not sent to guardians.
+
+### New screens
+Overview, learners and learner profiles, classes, incidents and details, cases and details, interventions, appeals, tasks, parent contacts, meetings, document drafts, reports, offences, staff administration, settings, subscription status, audit log and notifications.
