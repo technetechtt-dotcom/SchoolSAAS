@@ -76,7 +76,7 @@ def school_record(s,model,identifier,sid):
 
 def learner_scope(s,identifier,ctx):
     x=school_record(s,m.Learner,identifier,ctx["sid"])
-    if ctx["role"]=="educator" and (not ctx["assigned_class"] or x.class_name!=ctx["assigned_class"]):
+    if ctx["role"]=="educator" and x.class_name not in ctx["assigned_classes"]:
         raise HTTPException(403,"Not assigned to learner")
     return x
 
@@ -231,8 +231,8 @@ def learner_directory(q:str="",limit:int=Query(50,ge=1,le=100),offset:int=Query(
                       s:Session=Depends(m.db),ctx=Depends(m.current)):
     query=select(m.Learner).where(m.Learner.school_id==ctx["sid"])
     if ctx["role"]=="educator":
-        if not ctx["assigned_class"]:return {"items":[],"total":0,"limit":limit,"offset":offset}
-        query=query.where(m.Learner.class_name==ctx["assigned_class"])
+        if not ctx["assigned_classes"]:return {"items":[],"total":0,"limit":limit,"offset":offset}
+        query=query.where(m.Learner.class_name.in_(ctx["assigned_classes"]))
     if q.strip():
         term="%"+q.strip().replace("%",r"\%").replace("_",r"\_")+"%"
         query=query.where(or_(m.Learner.first_name.ilike(term),m.Learner.surname.ilike(term),
