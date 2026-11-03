@@ -112,6 +112,14 @@ def case_detail(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAG
             "status":c.status,"assigned_user_id":c.assigned_user_id,
             "incident_ids":[x.incident_id for x in linked]}
 
+@router.get("/cases/eligible-assignees")
+def eligible_assignees(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    """Only minimal staff data needed for assigning a case, not full membership admin."""
+    q=select(m.Membership,m.User).join(m.User,m.User.id==m.Membership.user_id).where(
+        m.Membership.school_id==ctx["sid"],m.Membership.active==True,m.User.active==True,
+        m.Membership.role.in_(("school_admin","principal","smt","hod")))
+    return [{"user_id":user.id,"label":user.email,"role":member.role} for member,user in s.execute(q).all()]
+
 @router.patch("/cases/{case_id}/assign")
 def assign_case(case_id:int,data:CaseAssign,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     c=school_record(s,m.Case,case_id,ctx["sid"])
@@ -140,7 +148,13 @@ def classes(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
 def incident_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
     rows=s.scalars(select(m.Incident).where(m.Incident.school_id==ctx["sid"]).order_by(m.Incident.id).limit(10000)).all()
     out=io.StringIO();w=csv.writer(out);w.writerow(["Incident ID","Learner ID","Offence ID","Location","Status","Created"])
-    for x in rows:w.writerow([x.id,x.learner_id,x.offence_id,x.location,x.status,x.created_at.isoformat()])
+    def safe_csv(value):
+        text_value=str(value)
+        # Spreadsheet applications may interpret leading formula characters as executable formulas.
+        if text_value.lstrip().startswith(('=', '+', '-', '@', '\t', '\r')):
+            return "'" + text_value
+        return text_value
+    for x in rows:w.writerow([safe_csv(v) for v in (x.id,x.learner_id,x.offence_id,x.location,x.status,x.created_at.isoformat())])
     m.log(s,ctx,"export","incidents",0);s.commit()
     return Response(content=out.getvalue(),media_type="text/csv",headers={"Content-Disposition":'attachment; filename="school-incidents.csv"',"Cache-Control":"no-store"})
 
@@ -241,7 +255,9 @@ def switch_school(data:SchoolSwitch,response:Response,s:Session=Depends(m.db),ct
         m.Membership.user_id==ctx["uid"],m.Membership.active==True))
     school=s.get(m.School,data.school_id)
     if not membership or not school or school.status!="active":raise HTTPException(403,"School access denied")
-    response.set_cookie("session",m.issue_token(ctx["uid"],school.id),httponly=True,
+    new_token=m.issue_token(ctx["uid"],school.id,s)
+    s.commit()
+    response.set_cookie("session",new_token,httponly=True,
         secure=m.os.getenv("COOKIE_SECURE","false")=="true",samesite="lax",max_age=28800)
     return {"school":school.name,"role":membership.role}
 
