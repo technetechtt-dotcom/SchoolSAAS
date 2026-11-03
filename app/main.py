@@ -34,6 +34,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(250))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    mfa_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 class Membership(Base):
     __tablename__ = 'memberships'
     __table_args__ = (UniqueConstraint('school_id','user_id'),)
@@ -163,11 +165,48 @@ class SchoolSetting(Base):
     key: Mapped[str] = mapped_column(String(60))
     value: Mapped[str] = mapped_column(String(200))
 
+def _ensure_sqlite_columns():
+    """Additive local upgrades for new nullable/defaulted columns (not a substitute for Alembic)."""
+    if not str(engine.url).startswith('sqlite'):
+        return
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    planned = {
+        'users': [
+            ('mfa_secret', 'VARCHAR(64)'),
+            ('mfa_enabled', 'BOOLEAN DEFAULT 0'),
+        ],
+    }
+    with engine.begin() as conn:
+        for table, cols in planned.items():
+            if table not in insp.get_table_names():
+                continue
+            present = {c['name'] for c in insp.get_columns(table)}
+            for name, typ in cols:
+                if name not in present:
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {typ}'))
+
+def _ensure_sqlite_user_mfa_columns():
+    if not str(engine.url).startswith('sqlite'):
+        return
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if 'users' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('users')}
+    with engine.begin() as conn:
+        if 'mfa_secret' not in cols:
+            conn.execute(text('ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(64)'))
+        if 'mfa_enabled' not in cols:
+            conn.execute(text('ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN DEFAULT 0'))
+
 @app.on_event('startup')
 def startup():
     # Local prototype only; deployment must run Alembic with auto creation disabled.
     if os.getenv("SCHEMA_AUTO_CREATE","true").lower() == "true":
         Base.metadata.create_all(engine)
+        _ensure_sqlite_user_mfa_columns()
+        _ensure_sqlite_columns()
 
 def db():
     with SessionLocal() as s: yield s
@@ -302,10 +341,15 @@ def login(data:Login,response:Response,s:Session=Depends(db)):
     if not mem or not mem.active or not user.active or school.status!='active':
         raise HTTPException(403,'School access denied')
     s.query(LoginFailure).filter(LoginFailure.identity_hash==identity).delete(synchronize_session=False)
+    s.commit()
+    if getattr(user, 'mfa_enabled', False):
+        from app.pilot_pack import issue_mfa_pending
+        return {'mfa_required': True, 'mfa_token': issue_mfa_pending(user.id, school.id),
+                'school': school.name, 'role': mem.role}
     token=issue_token(user.id,school.id,s)
     s.commit()
     response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
-    return {'school':school.name,'role':mem.role}
+    return {'school':school.name,'role':mem.role,'mfa_required':False}
 @app.post('/api/logout')
 def logout(response:Response,request:Request,s:Session=Depends(db)):
     revoke_token(request.cookies.get('session'),s)
@@ -333,7 +377,9 @@ def me(request: Request, session: Session = Depends(db)):
     if not membership or not membership.active or not user or not user.active or not school or school.status != 'active':
         return {'authenticated': False}
     return {'authenticated': True, 'uid': uid, 'sid': sid, 'role': membership.role,
-            'school': school.name, 'assigned_class': membership.assigned_class}
+            'school': school.name, 'assigned_class': membership.assigned_class,
+            'mfa_enabled': bool(getattr(user, 'mfa_enabled', False)),
+            'platform_admin': user.email in {x.strip().lower() for x in os.getenv('PLATFORM_ADMIN_EMAILS','').split(',') if x.strip()}}
 @app.get('/api/learners')
 def learners(s:Session=Depends(db),ctx=Depends(current)):
     q=select(Learner).where(Learner.school_id==ctx['sid'])
@@ -465,8 +511,26 @@ def invite(data:InviteRequest,s:Session=Depends(db),ctx=Depends(require('school_
     i=StaffInvite(school_id=ctx['sid'],email=data.email.lower(),role=data.role,
         assigned_class=data.assigned_class,token_hash=hashlib.sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(timezone.utc)+timedelta(days=3))
-    s.add(i);s.flush();log(s,ctx,'invite','staff_invite',i.id);s.commit()
-    return {'token':token,'expires_in_hours':72,'notice':'Share this token with the intended staff member privately.'}
+    s.add(i);s.flush();log(s,ctx,'invite','staff_invite',i.id)
+    emailed=False
+    try:
+        from app import mailer
+        if mailer.smtp_ready():
+            mailer.send_email(data.email.lower(),'SchoolCare staff invitation',
+                f"You have been invited to join {ctx['school']} as {data.role}.\n\n"
+                f"Accept in the app with this invitation token (expires in 72 hours):\n{token}\n\n"
+                f"Open: {mailer.public_url()}\n")
+            emailed=True
+    except Exception:
+        raise HTTPException(503,'Invitation email delivery failed')
+    s.commit()
+    out={'expires_in_hours':72,'emailed':emailed}
+    if emailed:
+        out['notice']='Invitation emailed to the staff member.'
+    else:
+        out['token']=token
+        out['notice']='SMTP not configured; share this token with the intended staff member privately.'
+    return out
 
 @app.post('/api/invitations/accept',status_code=201)
 def accept_invite(data:InviteAccept,s:Session=Depends(db)):
@@ -586,3 +650,9 @@ from app.operations import router as operations_router
 app.include_router(operations_router)
 from app.account_recovery import router as recovery_router
 app.include_router(recovery_router)
+from app.pilot_pack import router as pilot_router
+app.include_router(pilot_router)
+
+@app.delete('/api/audit/{event_id}')
+def delete_audit_blocked(event_id: int):
+    raise HTTPException(405, 'Audit events are append-only and cannot be deleted')

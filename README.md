@@ -97,7 +97,38 @@ Multi-factor authentication, verified email invitations and password recovery, n
 - Added operations, multi-class and recovery regression tests.
 
 ### Important unimplemented items
-Do not use with identifiable child data until POPIA, safeguarding and security assessments are complete. The following remain unfinished: MFA, verified school provisioning, parent portal, delivery/acknowledgement workflows, actual PDF/Word letter templates, full Code of Conduct/versioning and disciplinary hearings, comprehensive evidence storage, payment gateway and invoicing, platform-owner console, formal PostgreSQL tenant enforcement, backup restoration validation, data retention automation and independent penetration testing.
+Do not use with identifiable child data until POPIA, safeguarding and security assessments are complete. Foundations now exist for several former gaps (see v0.6), but legal sign-off, payment gateways, PDF/Word production templates, penetration testing and automated retention enforcement remain unfinished.
 
 ### Deployment caution
 Only new fresh development or staging databases should run the baseline Alembic revision automatically. Populated legacy databases need a reviewed migration and tested backup. SCHEMA_AUTO_CREATE=false disables automatic startup schema creation. Use COOKIE_SECURE=true behind TLS.
+
+## v0.6 pilot foundation (local increment)
+Adds foundational controls requested for a broader pilot surface. **Still not production-approved for identifiable children's data.**
+
+- TOTP MFA enroll/enable/disable and MFA challenge at login (`/api/mfa/*`)
+- SMTP-backed staff invitations when SMTP_* is configured (falls back to private token)
+- Versioned Code of Conduct register with approval
+- Disciplinary hearing schedule/update register (human-led; no automated sanctions)
+- Evidence file uploads (local disk under `EVIDENCE_UPLOAD_DIR`)
+- Letter templates with plain-text render placeholders
+- Parent acknowledgement invite + redeem flow
+- Billing invoice stubs (no payment gateway)
+- Privacy retention placeholders + POPIA status endpoint
+- Platform-admin console gated by `PLATFORM_ADMIN_EMAILS`
+- Append-only audit delete blocked; `scripts/backup_db.py`; `scripts/postgres_rls.sql` sketch
+- Shared `app/mailer.py` for recovery/invites/parent notices
+
+### Still not complete
+Independent POPIA legal assessment, real payment collection, parent self-service portal accounts, PDF/Word generation, SSO, full Postgres RLS wiring in the app session, penetration testing, and immutable offsite audit storage remain unfinished.
+
+## v0.6 pilot foundation
+- Shared SMTP mailer for password recovery, staff invitations (email when configured) and parent acknowledgement invites.
+- TOTP MFA setup/enable/disable with login challenge (`mfa_required` + `/api/mfa/verify-login`).
+- Code of Conduct versioning with draft/approve workflow; disciplinary hearing register (human-led outcomes only).
+- Evidence file uploads (local disk under `EVIDENCE_UPLOAD_DIR`); plain-text letter templates with merge fields.
+- Parent portal access tokens + acknowledgement API/UI (`#parent=` hash).
+- Billing invoice stubs (no payment gateway); privacy/retention placeholders; platform-admin console gated by `PLATFORM_ADMIN_EMAILS`.
+- Audit delete blocked (append-only intent); `scripts/backup_db.py`; optional `scripts/postgres_rls.sql` sketch.
+- Expanded `.env.example` and `tests/test_pilot_pack.py`.
+
+**Still not production / not POPIA-cleared:** no payment processor, no PDF/Word generation, no proven backup restore certification, no enforced Postgres RLS in the app connection layer, no independent security audit.

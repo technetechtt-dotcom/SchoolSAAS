@@ -5,7 +5,7 @@ Revises:
 """
 from alembic import op
 from app import main
-from app import extended, operations
+from app import extended, operations, account_recovery, pilot_pack
 revision="0001_baseline"
 down_revision=None
 branch_labels=None

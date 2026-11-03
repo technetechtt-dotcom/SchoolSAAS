@@ -51,15 +51,15 @@ let user=null, unsaved=false, records={};
 const groups=[
  ["WORKSPACE",[["dashboard","Overview"],["notifications","Notifications"],["tasks","Review tasks"]]],
  ["LEARNERS",[["learners","Learners"],["classes","Grades & classes"],["class-assignments","Class assignments"]]],
- ["BEHAVIOUR",[["incidents","Incidents"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"]]],
- ["COMMUNICATION",[["contacts","Parent contacts"],["guardians","Guardians"],["appointments","Meetings"],["documents","Document drafts"]]],
+ ["BEHAVIOUR",[["incidents","Incidents"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"],["hearings","Hearings"],["evidence","Evidence"]]],
+ ["COMMUNICATION",[["contacts","Parent contacts"],["guardians","Guardians"],["appointments","Meetings"],["documents","Document drafts"],["letters","Letter templates"],["parent-acks","Parent acknowledgements"]]],
  ["ANALYTICS",[["reports","Reports"]]],
- ["ADMINISTRATION",[["offences","Offences"],["staff","Staff & access"],["settings","Settings"],["subscription","Subscription"],["audit","Audit log"]]]
+ ["ADMINISTRATION",[["offences","Offences"],["conduct","Code of Conduct"],["staff","Staff & access"],["settings","Settings"],["security","Security & MFA"],["privacy","Privacy & retention"],["subscription","Subscription"],["billing","Billing"],["platform","Platform"],["audit","Audit log"]]]
 ];
 const manager=()=>user&&["school_admin","principal","smt","hod"].includes(user.role);
 const admin=()=>user&&["school_admin","principal"].includes(user.role);
-const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments"].includes(key)||manager();
-const can=key=>allowed(key)&&(!["staff","settings","subscription","audit"].includes(key)||admin());
+const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments","hearings","evidence","letters","parent-acks","conduct"].includes(key)||manager();
+const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","security","privacy","billing","platform"].includes(key)||admin())&&(key!=="platform"||user.platform_admin);
 const input=(name,label,type="text",value="",extra="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><input id="field-'+esc(name)+'" name="'+esc(name)+'" type="'+esc(type)+'" value="'+esc(value)+'" '+extra+'></div>';
 const area=(name,label,value="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><textarea id="field-'+esc(name)+'" name="'+esc(name)+'">'+esc(value)+'</textarea></div>';
 const options=(name,label,items,current="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><select id="field-'+esc(name)+'" name="'+esc(name)+'">'+items.map(x=>'<option value="'+esc(x[0])+'" '+(String(x[0])===String(current)?"selected":"")+'>'+esc(x[1])+'</option>').join("")+'</select></div>';
@@ -253,6 +253,48 @@ async function notifications(){
  const d=await api("notifications");$("page").innerHTML=head("Notifications","Outstanding review items requiring attention")+
  panel(table(["Incident","Reason","Due","Status"],d.map(x=>[link("#"+x.incident_id,"incidents",x.incident_id),plain(x.title),plain(x.due_at.slice(0,10)),pill(x.status)])));
 }
+async function conductPage(){
+ const d=await api("conduct-versions");$("page").innerHTML=head("Code of Conduct versions","Versioned school rules pending legal approval workflows",btn("New version","create-conduct", "", false))+
+ panel(table(["Version","Title","Effective","Approved","Actions"],d.map(x=>[plain(x.version_label),plain(x.title),plain(x.effective_from.slice(0,10)),pill(x.approved?"approved":"draft"),
+  (x.approved?"":btn("Approve","approve-conduct",x.id))+btn("Open","view-conduct",x.id)])));
+}
+async function hearingsPage(){
+ const d=await api("hearings");$("page").innerHTML=head("Disciplinary hearings","Human-led hearing register — no automated sanctions",btn("Schedule hearing","create-hearing","",false))+
+ panel(table(["ID","Case","When","Chair","Status","Outcome","Actions"],d.map(x=>[plain(x.id),link("Case #"+x.case_id,"cases",x.case_id),plain(x.scheduled_at.slice(0,16).replace("T"," ")),plain(x.chair),pill(x.status),plain(x.outcome),btn("Update","edit-hearing",x.id)])));
+}
+async function evidencePage(){
+ const d=await api("evidence");$("page").innerHTML=head("Evidence files","School-scoped uploads for incidents or cases",btn("Upload evidence","upload-evidence","",false))+
+ panel(table(["ID","File","Incident","Case","Size","Uploaded"],d.map(x=>[plain(x.id),plain(x.filename),plain(x.incident_id||"—"),plain(x.case_id||"—"),plain(x.size_bytes+" B"),plain(x.created_at.slice(0,19))])));
+}
+async function lettersPage(){
+ const d=await api("letter-templates");$("page").innerHTML=head("Letter templates","Plain-text drafts only — not sent to guardians",btn("New template","create-letter","",false))+
+ panel(table(["Code","Name","Actions"],d.map(x=>[plain(x.code),plain(x.name),btn("Render","render-letter",x.id)])));
+}
+async function parentAcksPage(){
+ const d=await api("parent-acknowledgements");$("page").innerHTML=head("Parent acknowledgements","Guardian notice confirmations",btn("Invite parent","invite-parent","",false))+
+ panel(table(["Learner","Subject","Email","When"],d.map(x=>[plain(x.learner_id),plain(x.subject),plain(x.email),plain(x.acknowledged_at.slice(0,19))])));
+}
+async function securityPage(){
+ $("page").innerHTML=head("Security & MFA","Protect staff sign-in with authenticator apps")+
+ panel('<p class="subtle">MFA status: <strong>'+(user.mfa_enabled?"enabled":"disabled")+'</strong></p>'+
+  btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"));
+}
+async function privacyPage(){
+ const [status,ret]=await Promise.all([api("privacy/status"),api("privacy/retention")]);
+ $("page").innerHTML=head("Privacy & retention","POPIA readiness placeholders — legal advice required")+
+ panel('<ul class="subtle"><li>POPIA assessment complete: '+esc(status.popia_assessment_complete)+'</li><li>Lawful basis recorded: '+esc(status.lawful_basis_recorded)+'</li><li>Operator agreement on file: '+esc(status.operator_agreement_on_file)+'</li><li>'+esc(status.message)+'</li></ul>')+
+ panel(table(["Record type","Retain days","Notes"],(ret.policies||[]).map(x=>[plain(x.record_type),plain(x.retain_days),plain(x.notes)]))+btn("Set retention rule","set-retention","",false),'Retention policies');
+}
+async function billingPage(){
+ const d=await api("billing/invoices");$("page").innerHTML=head("Billing","Local invoice stubs — no payment gateway connected",btn("Issue invoice","create-invoice","",false))+
+ panel(table(["ID","Amount","Status","Description","Actions"],d.map(x=>[plain(x.id),plain((x.amount_cents/100).toFixed(2)+" "+x.currency),pill(x.status),plain(x.description),x.status==="issued"?btn("Mark paid","mark-paid",x.id):""])));
+}
+async function platformPage(){
+ const [schools,health]=await Promise.all([api("platform/schools"),api("platform/health")]);
+ $("page").innerHTML=head("Platform console","Cross-tenant operator view")+
+ panel('<p class="subtle">Schools: '+esc(health.schools)+' · Users: '+esc(health.users)+' · SMTP: '+esc(health.smtp_configured)+' · COOKIE_SECURE: '+esc(health.cookie_secure)+'</p>')+
+ panel(table(["ID","Name","Slug","Plan","Status","Actions"],schools.map(x=>[plain(x.id),plain(x.name),plain(x.slug),plain(x.plan),pill(x.status),btn("Suspend","suspend-school",x.id)+" "+btn("Activate","activate-school",x.id)])));
+}
 async function render(){
  if(!user)return;navigation();let key=path().split("/")[0],id=path().split("/")[1];
  if(!can(key)){location.hash="#/dashboard";key="dashboard";id=null}
@@ -267,6 +309,15 @@ async function render(){
  else if(key==="settings")await settings();
  else if(key==="subscription")await subscription();
  else if(key==="notifications")await notifications();
+ else if(key==="conduct")await conductPage();
+ else if(key==="hearings")await hearingsPage();
+ else if(key==="evidence")await evidencePage();
+ else if(key==="letters")await lettersPage();
+ else if(key==="parent-acks")await parentAcksPage();
+ else if(key==="security")await securityPage();
+ else if(key==="privacy")await privacyPage();
+ else if(key==="billing")await billingPage();
+ else if(key==="platform")await platformPage();
  else if(["learners","incidents","cases","offences","staff","interventions","contacts","tasks","appeals","appointments","documents","classes","audit"].includes(key))await listPage(key);
  else await dashboard();
  $("main").focus({preventScroll:true});
@@ -307,6 +358,25 @@ async function openAction(action,id){
  case "create-document":name="Create document draft";kind="documents";body=await learnerPicker()+input("title","Document title","text","","required")+options("document_type","Document type",["letter","meeting_request","outcome","other"].map(x=>[x,x]))+area("body","Draft text (staff approval required)");break;
  case "accept-invitation":name="Accept staff invitation";kind="invitations/accept";body=input("token","Invitation token","text","","required")+input("password","Account password (12+ characters)","password","","minlength=\"12\" required");break;
  case "view-document":data=await api("documents/"+id);modal(data.title,panel('<p style="white-space:pre-wrap">'+esc(data.body)+'</p><p class="subtle">Draft only. No letter has been sent.</p>'));return;
+ case "create-conduct":name="New Code of Conduct version";kind="conduct-versions";body=input("version_label","Version label","text","","required")+input("title","Title","text","","required")+input("effective_from","Effective from","datetime-local","","required")+area("body","Full text");break;
+ case "approve-conduct":await api("conduct-versions/"+id+"/approve","PATCH",{});toast("Conduct version approved");navigate("conduct");return;
+ case "view-conduct":data=await api("conduct-versions/"+id);modal(data.title,panel('<p class="subtle">'+esc(data.version_label)+" · "+esc(data.effective_from)+' · '+(data.approved?"approved":"draft")+'</p><pre style="white-space:pre-wrap">'+esc(data.body)+'</pre>'));return;
+ case "create-hearing":name="Schedule hearing";kind="hearings";body=options("case_id","Case",(await api("cases")).map(x=>[x.id,"Case #"+x.id+" · "+x.title]))+input("scheduled_at","Date and time","datetime-local","","required")+input("chair","Chair","text","","required")+area("notes","Notes");break;
+ case "edit-hearing":name="Update hearing";kind="hearing-update:"+id;body=options("status","Status",["scheduled","in_progress","adjourned","completed","cancelled"].map(x=>[x,x]))+input("outcome","Outcome","text")+area("notes","Notes");break;
+ case "upload-evidence":name="Upload evidence";kind="upload-evidence";body=input("incident_id","Incident ID (optional)","number")+input("case_id","Case ID (optional)","number")+'<div><label for="evidence-file">File</label><input id="evidence-file" name="file" type="file" required></div>';break;
+ case "create-letter":name="New letter template";kind="letter-templates";body=input("code","Code","text","","required")+input("name","Name","text","","required")+area("body","Body (use {{learner_name}}, {{grade}}, {{class_name}}, {{school}}, {{date}})");break;
+ case "render-letter":name="Render letter draft";kind="render-letter:"+id;body=input("learner_id","Learner ID","number","","required");break;
+ case "invite-parent":name="Invite parent acknowledgement";kind="parent-portal/invite";body=input("learner_id","Learner ID","number","","required")+input("email","Guardian email","email","","required")+input("subject","Subject","text","SchoolCare notice","required");break;
+ case "mfa-setup":data=await api("mfa/setup","POST",{});modal("MFA setup",panel('<p class="subtle">Add this secret to your authenticator app, then enable MFA.</p><p><code>'+esc(data.secret)+'</code></p><p class="subtle">'+esc(data.otpauth_uri)+'</p>'));return;
+ case "mfa-enable":name="Enable MFA";kind="mfa/enable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "mfa-disable":name="Disable MFA";kind="mfa/disable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "set-retention":name="Retention rule";kind="privacy/retention";body=input("record_type","Record type","text","incidents","required")+input("retain_days","Retain days","number","2555","required min=\"30\"")+input("notes","Notes","text");break;
+ case "create-invoice":name="Issue invoice";kind="billing/invoices";body=input("amount_cents","Amount in cents","number","50000","required min=\"100\"")+input("description","Description","text","SchoolCare subscription");break;
+ case "mark-paid":await api("billing/invoices/"+id+"/mark-paid","POST",{});toast("Invoice marked paid (manual)");navigate("billing");return;
+ case "suspend-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"suspended"});toast("School suspended");navigate("platform");return;
+ case "activate-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"active"});toast("School activated");navigate("platform");return;
+ case "complete-mfa":name="Enter MFA code";kind="mfa/verify-login";body=input("mfa_token","MFA token","text",id,'readonly required')+input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "parent-ack":name="Acknowledge school notice";kind="parent-portal/acknowledge";body=input("token","Access token","text",id,'readonly required')+input("subject","Subject acknowledged","text","SchoolCare notice","required");break;
  default:return;
  }
  modal(name,jsonForm(kind,body,name.startsWith("Edit")?"Save changes":"Save"));bindLearnerPicker();
@@ -335,6 +405,24 @@ async function submitForm(f){
  if(prefix==="appointment-update"){url="appointments/"+id;method="PATCH";go="appointments"}
  if(k==="settings"){url="settings";method="PUT";go="settings"}
  if(k==="academic"){url="settings/academic";method="PUT";data.academic_year=Number(data.academic_year);data.term=Number(data.term);go="settings"}
+ if(k==="conduct-versions"){data.effective_from=new Date(data.effective_from).toISOString();go="conduct"}
+ if(k==="hearings"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="hearings"}
+ if(prefix==="hearing-update"){url="hearings/"+id;method="PATCH";go="hearings"}
+ if(k==="letter-templates")go="letters"
+ if(prefix==="render-letter"){url="letter-templates/"+id+"/render?learner_id="+encodeURIComponent(data.learner_id);method="POST";const rendered=await api(url,method,{});modal(rendered.name,panel('<pre style="white-space:pre-wrap">'+esc(rendered.rendered_text)+'</pre><p class="subtle">Draft only — not emailed or posted.</p>'));close();return}
+ if(k==="parent-portal/invite")go="parent-acks"
+ if(k==="parent-portal/acknowledge"){go="";}
+ if(k==="mfa/enable"||k==="mfa/disable")go="security"
+ if(k==="privacy/retention"){url="privacy/retention";method="PUT";data.retain_days=Number(data.retain_days);go="privacy"}
+ if(k==="billing/invoices"){data.amount_cents=Number(data.amount_cents);go="billing"}
+ if(k==="mfa/verify-login"){await api(k,"POST",data);user=await api("me");if(!user.authenticated)throw Error("MFA session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';close();navigate("dashboard");schoolSelector();toast("Signed in with MFA");return}
+ if(k==="upload-evidence"){
+   const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a file",true);return}
+   const fd=new FormData();if(data.incident_id)fd.append("incident_id",data.incident_id);if(data.case_id)fd.append("case_id",data.case_id);fd.append("file",file);
+   const response=await fetch("/api/evidence",{method:"POST",credentials:"same-origin",headers:{...(csrf()?{"X-CSRF-Token":csrf()}:{})},body:fd});
+   const result=await response.json();if(!response.ok)throw Error(typeof result.detail==="string"?result.detail:"Upload failed");
+   toast("Evidence uploaded");unsaved=false;close();navigate("evidence");return
+ }
  if(k==="import-learners"){
    const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a CSV file",true);return}
    const text=await file.text();
@@ -367,7 +455,7 @@ async function submitForm(f){
  if(k==="account-recovery/complete"){history.replaceState(null,"",location.pathname);toast("Password changed. Sign in again.");return}
  if(k==="account-recovery/request"){toast(result.message||"Check your email for recovery instructions.");return}
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
- if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
+ if(k==="invitations"){if(result.emailed){toast(result.notice||"Invitation emailed");navigate("staff");return}modal("Invitation generated",panel('<p>'+esc(result.notice||"Share this token privately.")+'</p><textarea readonly aria-label="Invitation token">'+esc(result.token||"")+'</textarea>'));return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
 }
@@ -383,7 +471,10 @@ async function schoolSelector(){
  }catch(e){toast(e.message,true)}
 }
 async function signIn(type,f){
- try{const data=getData(f);if(type==="login"){data.school_slug=(data.school_slug||"").trim().toLowerCase();data.email=(data.email||"").trim().toLowerCase()}if(type==="register"){data.slug=(data.slug||"").trim().toLowerCase();data.school_name=(data.school_name||"").trim();if(!/^[a-z0-9-]{3,40}$/.test(data.slug))throw Error("School identifier must be 3–40 lowercase letters, numbers, or hyphens");if((data.password||"").length<12)throw Error("Password must be at least 12 characters")}await api(type,"POST",data);user=await api("me");if(!user.authenticated)throw Error("Signed in but session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard");schoolSelector()}
+ try{const data=getData(f);if(type==="login"){data.school_slug=(data.school_slug||"").trim().toLowerCase();data.email=(data.email||"").trim().toLowerCase()}if(type==="register"){data.slug=(data.slug||"").trim().toLowerCase();data.school_name=(data.school_name||"").trim();if(!/^[a-z0-9-]{3,40}$/.test(data.slug))throw Error("School identifier must be 3–40 lowercase letters, numbers, or hyphens");if((data.password||"").length<12)throw Error("Password must be at least 12 characters")}
+  const auth=await api(type,"POST",data);
+  if(auth&&auth.mfa_required){await openAction("complete-mfa",auth.mfa_token);return}
+  user=await api("me");if(!user.authenticated)throw Error("Signed in but session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard");schoolSelector()}
  catch(e){toast(e.message,true)}
 }
 document.addEventListener("submit",e=>{e.preventDefault();const f=e.target;if(f.id==="login"||f.id==="register")signIn(f.id,f);else if(f.dataset.form)submitForm(f)});
@@ -404,6 +495,6 @@ document.addEventListener("input",e=>{if(e.target.closest("#dialog form")||e.tar
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("dialog").classList.contains("open"))close();if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}});
 window.addEventListener("beforeunload",e=>{if(unsaved){e.preventDefault();e.returnValue=""}});
 window.addEventListener("hashchange",()=>render());
-(async()=>{if(location.hash.startsWith("#reset=")){const token=location.hash.slice(7);try{await openAction("complete-reset",token)}catch(e){toast(e.message,true)}return}try{user=await api("me");if(!user.authenticated)return;$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
+(async()=>{if(location.hash.startsWith("#reset=")){const token=location.hash.slice(7);try{await openAction("complete-reset",token)}catch(e){toast(e.message,true)}return}if(location.hash.startsWith("#parent=")){const token=location.hash.slice(8);try{await openAction("parent-ack",token)}catch(e){toast(e.message,true)}return}try{user=await api("me");if(!user.authenticated)return;$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
 })();
 </script></body></html>

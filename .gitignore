@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 *.db
 *.sqlite
+uploads/
+backups/
 
 # Local development files
 .venv/

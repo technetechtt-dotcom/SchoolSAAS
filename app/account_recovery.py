@@ -1,12 +1,12 @@
 """Password recovery with hashed one-use tokens and configured SMTP delivery."""
 from datetime import datetime,timezone,timedelta
-import hashlib,os,secrets,ssl,smtplib
-from email.message import EmailMessage
+import hashlib,secrets
 from fastapi import APIRouter,Depends,HTTPException
 from pydantic import BaseModel,Field
 from sqlalchemy import String,ForeignKey,DateTime,Boolean,select,func,delete
 from sqlalchemy.orm import Session,Mapped,mapped_column
 from app import main as m
+from app import mailer
 
 router=APIRouter(prefix="/api/account-recovery")
 class PasswordReset(m.Base):
@@ -24,26 +24,9 @@ class CompleteReset(BaseModel):
     token:str=Field(min_length=32,max_length=200)
     password:str=Field(min_length=12,max_length=128)
 
-def smtp_ready():
-    return all(os.getenv(k) for k in ("SMTP_HOST","SMTP_USERNAME","SMTP_PASSWORD","SMTP_FROM","APP_PUBLIC_URL"))
-
-def send_email(destination,token):
-    msg=EmailMessage()
-    msg["Subject"]="SchoolCare password reset"
-    msg["From"]=os.environ["SMTP_FROM"]
-    msg["To"]=destination
-    msg.set_content("A password reset was requested for this SchoolCare account. "
-                    "If this was not you, ignore this message.\n\n"
-                    "Reset URL (expires in 20 minutes): "+
-                    os.environ["APP_PUBLIC_URL"].rstrip("/")+"/#reset="+token+"\n")
-    context=ssl.create_default_context()
-    with smtplib.SMTP_SSL(os.environ["SMTP_HOST"],int(os.getenv("SMTP_PORT","465")),timeout=10,context=context) as smtp:
-        smtp.login(os.environ["SMTP_USERNAME"],os.environ["SMTP_PASSWORD"])
-        smtp.send_message(msg)
-
 @router.post("/request")
 def request_reset(data:RequestReset,s:Session=Depends(m.db)):
-    if not smtp_ready():
+    if not mailer.smtp_ready():
         raise HTTPException(503,"Password recovery email is not configured")
     generic={"message":"If this account exists, recovery instructions will be sent."}
     user=s.scalar(select(m.User).where(m.User.email==data.email.strip().lower()))
@@ -56,7 +39,11 @@ def request_reset(data:RequestReset,s:Session=Depends(m.db)):
     item=PasswordReset(user_id=user.id,token_hash=hashlib.sha256(token.encode()).hexdigest(),
          expires_at=datetime.now(timezone.utc)+timedelta(minutes=20))
     try:
-        send_email(user.email,token)
+        mailer.send_email(user.email,"SchoolCare password reset",
+            "A password reset was requested for this SchoolCare account. "
+            "If this was not you, ignore this message.\n\n"
+            "Reset URL (expires in 20 minutes): "+
+            mailer.public_url("/#reset="+token)+"\n")
     except Exception:
         raise HTTPException(503,"Recovery email delivery is temporarily unavailable")
     s.add(item);s.commit()
