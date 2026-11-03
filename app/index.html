@@ -153,7 +153,7 @@ async function listPage(key){
  case "learners":return [link(x.name,"learners",x.id),plain(x.admission_no),plain(x.grade),plain(x.class_name)];
  case "incidents":return [link("#"+x.id,"incidents",x.id),plain(x.location),pill(x.status),plain(x.created_at.slice(0,10))];
  case "cases":return [link("#"+x.id,"cases",x.id),plain(x.title),pill(x.status),link("#"+x.learner_id,"learners",x.learner_id)];
- case "offences":return [plain(x.code),plain(x.name),plain(x.category),pill(x.severity)];
+ case "offences":return [plain(x.code),plain(x.name),plain(x.category),["school_admin","principal","smt"].includes(user.role)?btn(String(x.severity)+" · Edit","edit-offence",x.id):pill(x.severity)];
  case "staff":return [plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id)];
  case "interventions":return [plain(x.id),link("#"+x.incident_id,"incidents",x.incident_id),plain(x.type),btn(x.outcome,"edit-intervention",x.id)];
  case "contacts":return [link("#"+x.learner_id,"learners",x.learner_id),plain(x.method),plain(x.purpose),plain(x.outcome)];
@@ -232,6 +232,7 @@ async function openAction(action,id){
  case "create-learner":name="New learner";kind="learners";body=input("admission_no","Admission number","text","","required")+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required")+input("class_name","Class","text","","required");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]]);break;
+ case "edit-offence":data=(await api("offences")).find(x=>String(x.id)===String(id));if(!data)throw Error("Offence not found");name="Edit unused offence";kind="offence-update:"+id;body="<p class=\"subtle\">Offences already used in incidents cannot be edited. Create a new offence code for revised policies.</p>"+input("name","Name","text",data.name,"required")+input("category","Category","text",data.category,"required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]],data.severity);break;
  case "create-incident":name="Report incident";kind="incidents";body=await learnerPicker()+options("offence_id","Offence",(await schoolOffences()).map(x=>[x.id,x.code+" · "+x.name]))+options("location","Location",["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"].map(x=>[x,x]))+area("description","Description")+options("immediate_action","Immediate action",["Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x]));break;
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
  case "create-case":{name="New case";kind="cases";const i=await api("incidents");body=await learnerPicker()+input("title","Case title","text","","required")+"<div><label>Linked incidents</label><div class=\"stack\" id=\"case-incident-choices\">"+i.map(x=>"<label><input style=\"width:auto;min-height:auto\" type=\"checkbox\" name=\"linked_incident\" value=\""+esc(x.id)+"\" data-learner=\""+esc(x.learner_id)+"\"> Incident #"+esc(x.id)+"</label>").join("")+"</div><p class=\"subtle\">Select incidents for the chosen learner; only matching incidents will be shown.</p></div>";break;}
@@ -266,6 +267,7 @@ async function submitForm(f){
  if(prefix==="case-status"){url="cases/"+id;method="PATCH";go="cases/"+id}
  if(prefix==="case-assignment"){url="cases/"+id+"/assign";method="PATCH";data.assigned_user_id=data.assigned_user_id||null;go="cases/"+id}
  if(prefix==="member-update"){url="members/"+id;method="PATCH";go="staff"}
+ if(prefix==="offence-update"){url="offences/"+id;method="PATCH";data.severity=Number(data.severity);go="offences"}
  if(prefix==="intervention-update"){url="interventions/"+id;method="PATCH";go="interventions"}
  if(prefix==="task-update"){url="review-tasks/"+id;method="PATCH";go="tasks"}
  if(prefix==="appeal-update"){url="appeals/"+id;method="PATCH";go="appeals"}
