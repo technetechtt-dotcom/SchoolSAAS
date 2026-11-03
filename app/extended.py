@@ -1,0 +1,208 @@
+"""Additional school-scoped workflows for the v0.3 usability release.
+
+This module extends the original MVP without changing its existing routes.
+Sensitive records remain school-scoped and require explicit permissions.
+"""
+from datetime import datetime, timezone
+from collections import Counter
+import csv
+import io
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
+from sqlalchemy import String, ForeignKey, DateTime, Text, select, func
+from sqlalchemy.orm import Mapped, mapped_column, Session
+from app import main as m
+
+router=APIRouter(prefix="/api")
+MANAGERS=('school_admin','principal','smt','hod')
+ADMIN=('school_admin','principal')
+
+class Appeal(m.Base):
+    __tablename__="appeals"
+    id:Mapped[int]=mapped_column(primary_key=True)
+    school_id:Mapped[int]=mapped_column(ForeignKey("schools.id"),index=True)
+    case_id:Mapped[int]=mapped_column(ForeignKey("cases.id"))
+    reason:Mapped[str]=mapped_column(Text)
+    status:Mapped[str]=mapped_column(String(30),default="submitted")
+    outcome:Mapped[str]=mapped_column(Text,default="")
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class Appointment(m.Base):
+    __tablename__="appointments"
+    id:Mapped[int]=mapped_column(primary_key=True)
+    school_id:Mapped[int]=mapped_column(ForeignKey("schools.id"),index=True)
+    learner_id:Mapped[int]=mapped_column(ForeignKey("learners.id"))
+    title:Mapped[str]=mapped_column(String(180))
+    scheduled_at:Mapped[datetime]=mapped_column(DateTime(timezone=True))
+    status:Mapped[str]=mapped_column(String(30),default="scheduled")
+
+class SchoolDocument(m.Base):
+    __tablename__="school_documents"
+    id:Mapped[int]=mapped_column(primary_key=True)
+    school_id:Mapped[int]=mapped_column(ForeignKey("schools.id"),index=True)
+    learner_id:Mapped[int]=mapped_column(ForeignKey("learners.id"))
+    title:Mapped[str]=mapped_column(String(180))
+    body:Mapped[str]=mapped_column(Text)
+    document_type:Mapped[str]=mapped_column(String(40),default="letter")
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class AppealIn(BaseModel):
+    case_id:int
+    reason:str=Field(min_length=5,max_length=3000)
+class AppealUpdate(BaseModel):
+    status:str
+    outcome:str=Field(default="",max_length=3000)
+class AppointmentIn(BaseModel):
+    learner_id:int
+    title:str=Field(min_length=3,max_length=180)
+    scheduled_at:datetime
+class AppointmentUpdate(BaseModel):
+    status:str
+class DocIn(BaseModel):
+    learner_id:int
+    title:str=Field(min_length=3,max_length=180)
+    body:str=Field(min_length=1,max_length=10000)
+    document_type:str=Field(default="letter",max_length=40)
+class InterventionUpdate(BaseModel):
+    outcome:str
+    notes:str=Field(default="",max_length=2000)
+class CaseAssign(BaseModel):
+    assigned_user_id:int|None=None
+
+def school_record(s,model,identifier,sid):
+    x=s.scalar(select(model).where(model.id==identifier,model.school_id==sid))
+    if not x:raise HTTPException(404,"Record not found at this school")
+    return x
+
+def learner_scope(s,identifier,ctx):
+    x=school_record(s,m.Learner,identifier,ctx["sid"])
+    if ctx["role"]=="educator" and (not ctx["assigned_class"] or x.class_name!=ctx["assigned_class"]):
+        raise HTTPException(403,"Not assigned to learner")
+    return x
+
+@router.get("/learners/{learner_id}")
+def learner_detail(learner_id:int,s:Session=Depends(m.db),ctx=Depends(m.current)):
+    l=learner_scope(s,learner_id,ctx)
+    result={"id":l.id,"admission_no":l.admission_no,"first_name":l.first_name,
+        "surname":l.surname,"grade":l.grade,"class_name":l.class_name,"active":l.active}
+    if ctx["role"]!="educator":
+        result["incidents"]=[{"id":i.id,"status":i.status,"location":i.location,"date":i.created_at.isoformat()}
+            for i in s.scalars(select(m.Incident).where(m.Incident.school_id==ctx["sid"],m.Incident.learner_id==l.id).order_by(m.Incident.id.desc()).limit(50)).all()]
+        result["cases"]=[{"id":c.id,"title":c.title,"status":c.status}
+            for c in s.scalars(select(m.Case).where(m.Case.school_id==ctx["sid"],m.Case.learner_id==l.id)).all()]
+    return result
+
+@router.get("/incidents/{incident_id}")
+def incident_detail(incident_id:int,s:Session=Depends(m.db),ctx=Depends(m.current)):
+    i=school_record(s,m.Incident,incident_id,ctx["sid"])
+    if ctx["role"]=="educator" and i.reporter_id!=ctx["uid"]:raise HTTPException(403,"Not authorised to view this incident")
+    l=learner_scope(s,i.learner_id,ctx)
+    o=school_record(s,m.Offence,i.offence_id,ctx["sid"])
+    return {"id":i.id,"learner_id":l.id,"learner_name":l.first_name+" "+l.surname,
+            "offence":o.name,"severity":o.severity,"description":i.description,
+            "location":i.location,"immediate_action":i.immediate_action,
+            "status":i.status,"review_status":i.review_status,"review_notes":i.review_notes,
+            "created_at":i.created_at.isoformat()}
+
+@router.get("/cases/{case_id}")
+def case_detail(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    c=school_record(s,m.Case,case_id,ctx["sid"])
+    linked=s.scalars(select(m.CaseIncident).where(m.CaseIncident.school_id==ctx["sid"],m.CaseIncident.case_id==c.id)).all()
+    return {"id":c.id,"learner_id":c.learner_id,"title":c.title,
+            "status":c.status,"assigned_user_id":c.assigned_user_id,
+            "incident_ids":[x.incident_id for x in linked]}
+
+@router.patch("/cases/{case_id}/assign")
+def assign_case(case_id:int,data:CaseAssign,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    c=school_record(s,m.Case,case_id,ctx["sid"])
+    if data.assigned_user_id is not None:
+        membership=s.scalar(select(m.Membership).where(m.Membership.school_id==ctx["sid"],m.Membership.user_id==data.assigned_user_id,m.Membership.active==True))
+        if not membership:raise HTTPException(400,"Assignee is not an active member of this school")
+    c.assigned_user_id=data.assigned_user_id
+    m.log(s,ctx,"assign","case",c.id);s.commit()
+    return {"ok":True}
+
+@router.patch("/interventions/{intervention_id}")
+def update_intervention(intervention_id:int,data:InterventionUpdate,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    x=school_record(s,m.Intervention,intervention_id,ctx["sid"])
+    if data.outcome not in ("pending","improved","partially_improved","no_improvement","follow_up","closed"):
+        raise HTTPException(400,"Invalid intervention outcome")
+    x.outcome=data.outcome;x.notes=data.notes
+    m.log(s,ctx,"update","intervention",x.id);s.commit()
+    return {"ok":True}
+
+@router.get("/classes")
+def classes(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    rows=s.execute(select(m.Learner.grade,m.Learner.class_name,func.count()).where(m.Learner.school_id==ctx["sid"],m.Learner.active==True).group_by(m.Learner.grade,m.Learner.class_name).order_by(m.Learner.grade,m.Learner.class_name)).all()
+    return [{"grade":r[0],"class_name":r[1],"learners":r[2]} for r in rows]
+
+@router.get("/reports/incidents.csv")
+def incident_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    rows=s.scalars(select(m.Incident).where(m.Incident.school_id==ctx["sid"]).order_by(m.Incident.id).limit(10000)).all()
+    out=io.StringIO();w=csv.writer(out);w.writerow(["Incident ID","Learner ID","Offence ID","Location","Status","Created"])
+    for x in rows:w.writerow([x.id,x.learner_id,x.offence_id,x.location,x.status,x.created_at.isoformat()])
+    m.log(s,ctx,"export","incidents",0);s.commit()
+    return Response(content=out.getvalue(),media_type="text/csv",headers={"Content-Disposition":'attachment; filename="school-incidents.csv"',"Cache-Control":"no-store"})
+
+@router.get("/notifications")
+def notifications(s:Session=Depends(m.db),ctx=Depends(m.current)):
+    if ctx["role"]=="educator":
+        return []
+    rows=s.scalars(select(m.ReviewTask).where(m.ReviewTask.school_id==ctx["sid"],m.ReviewTask.status.in_(("open","in_progress"))).order_by(m.ReviewTask.due_at).limit(30)).all()
+    return [{"id":x.id,"title":x.reason,"incident_id":x.incident_id,"due_at":x.due_at.isoformat(),"status":x.status} for x in rows]
+
+@router.get("/appeals")
+def appeals(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    rows=s.scalars(select(Appeal).where(Appeal.school_id==ctx["sid"]).order_by(Appeal.id.desc()).limit(200)).all()
+    return [{"id":x.id,"case_id":x.case_id,"reason":x.reason,"status":x.status,"outcome":x.outcome} for x in rows]
+
+@router.post("/appeals",status_code=201)
+def add_appeal(data:AppealIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    school_record(s,m.Case,data.case_id,ctx["sid"])
+    x=Appeal(school_id=ctx["sid"],**data.model_dump());s.add(x);s.flush()
+    m.log(s,ctx,"create","appeal",x.id);s.commit();return {"id":x.id}
+
+@router.patch("/appeals/{appeal_id}")
+def review_appeal(appeal_id:int,data:AppealUpdate,s:Session=Depends(m.db),ctx=Depends(m.require("school_admin","principal","smt"))):
+    if data.status not in ("submitted","under_review","resolved","rejected"):raise HTTPException(400,"Invalid appeal status")
+    x=school_record(s,Appeal,appeal_id,ctx["sid"]);x.status=data.status;x.outcome=data.outcome
+    m.log(s,ctx,"review","appeal",x.id);s.commit();return {"ok":True}
+
+@router.get("/appointments")
+def appointments(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    rows=s.scalars(select(Appointment).where(Appointment.school_id==ctx["sid"]).order_by(Appointment.scheduled_at.desc()).limit(200)).all()
+    return [{"id":x.id,"learner_id":x.learner_id,"title":x.title,"scheduled_at":x.scheduled_at.isoformat(),"status":x.status} for x in rows]
+
+@router.post("/appointments",status_code=201)
+def add_appointment(data:AppointmentIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    school_record(s,m.Learner,data.learner_id,ctx["sid"])
+    x=Appointment(school_id=ctx["sid"],**data.model_dump());s.add(x);s.flush()
+    m.log(s,ctx,"create","appointment",x.id);s.commit();return {"id":x.id}
+
+@router.patch("/appointments/{appointment_id}")
+def update_appointment(appointment_id:int,data:AppointmentUpdate,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    if data.status not in ("scheduled","completed","cancelled"):raise HTTPException(400,"Invalid appointment status")
+    x=school_record(s,Appointment,appointment_id,ctx["sid"]);x.status=data.status
+    m.log(s,ctx,"update","appointment",x.id);s.commit();return {"ok":True}
+
+@router.get("/documents")
+def documents(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    rows=s.scalars(select(SchoolDocument).where(SchoolDocument.school_id==ctx["sid"]).order_by(SchoolDocument.id.desc()).limit(200)).all()
+    return [{"id":x.id,"learner_id":x.learner_id,"title":x.title,"document_type":x.document_type,"created_at":x.created_at.isoformat()} for x in rows]
+
+@router.get("/documents/{document_id}")
+def get_document(document_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    x=school_record(s,SchoolDocument,document_id,ctx["sid"])
+    return {"id":x.id,"learner_id":x.learner_id,"title":x.title,"body":x.body,"document_type":x.document_type}
+
+@router.post("/documents",status_code=201)
+def add_document(data:DocIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    school_record(s,m.Learner,data.learner_id,ctx["sid"])
+    x=SchoolDocument(school_id=ctx["sid"],**data.model_dump());s.add(x);s.flush()
+    m.log(s,ctx,"create","document",x.id);s.commit();return {"id":x.id}
+
+@router.get("/subscription")
+def subscription(ctx=Depends(m.require(*ADMIN)),s:Session=Depends(m.db)):
+    school=school_record(s,m.School,ctx["sid"],ctx["sid"])
+    return {"plan":school.plan,"status":school.status,"billing_enabled":False,
+            "message":"Billing not configured. No payments are collected."}
