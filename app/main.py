@@ -568,3 +568,5 @@ def reports(s:Session=Depends(db),ctx=Depends(require('school_admin','principal'
 # Register the v0.3 school-scoped workflow APIs and their database models.
 from app.extended import router as extended_router
 app.include_router(extended_router)
+from app.operations import router as operations_router
+app.include_router(operations_router)
