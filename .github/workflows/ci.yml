@@ -29,3 +29,33 @@ jobs:
           JWT_SECRET: ci-only-test-key-do-not-use-in-production
           PYTHONPATH: .
         run: python -m pytest -q
+
+  browser-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Run real browser workflow
+        env:
+          JWT_SECRET: browser-test-secret-not-for-production
+          DATABASE_URL: sqlite:////tmp/schoolcare-browser-test.db
+          SCHEMA_AUTO_CREATE: 'true'
+          SCHOOLCARE_URL: http://127.0.0.1:8000
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/schoolcare-browser.log 2>&1 &
+          python - <<'PY'
+          import urllib.request, time
+          for attempt in range(40):
+              try:
+                  urllib.request.urlopen("http://127.0.0.1:8000",timeout=1)
+                  break
+              except Exception:
+                  time.sleep(1)
+          else:
+              raise RuntimeError("Test web server failed to start")
+          PY
+          python tests/browser_smoke.py
