@@ -111,6 +111,20 @@ class Audit(Base):
     subject_id: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ActiveSession(Base):
+    __tablename__ = 'active_sessions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+class LoginFailure(Base):
+    __tablename__ = 'login_failures'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class StaffInvite(Base):
     __tablename__ = 'staff_invites'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -155,14 +169,53 @@ def startup(): Base.metadata.create_all(engine)  # replace with Alembic migratio
 def db():
     with SessionLocal() as s: yield s
 
-def issue_token(uid: int, school_id: int):
-    return jwt.encode({'sub':str(uid),'school_id':school_id,'exp':datetime.now(timezone.utc)+timedelta(hours=8)}, JWT_SECRET, algorithm='HS256')
+def issue_token(uid: int, school_id: int, session: Session):
+    """Issue a revocable token; only a SHA-256 digest is stored server-side."""
+    nonce = secrets.token_urlsafe(32)
+    expiry = datetime.now(timezone.utc) + timedelta(hours=8)
+    session.add(ActiveSession(token_hash=hashlib.sha256(nonce.encode()).hexdigest(),
+                              user_id=uid, school_id=school_id, expires_at=expiry))
+    return jwt.encode({'sub':str(uid), 'school_id':school_id,'jti':nonce,'exp':expiry},
+                      JWT_SECRET, algorithm='HS256')
+
+def revoke_token(raw: str | None, session: Session):
+    if not raw:
+        return
+    try:
+        payload = jwt.decode(raw, JWT_SECRET, algorithms=['HS256'])
+        nonce = payload.get('jti','')
+        stored = session.scalar(select(ActiveSession).where(
+            ActiveSession.token_hash == hashlib.sha256(nonce.encode()).hexdigest()))
+        if stored:
+            session.delete(stored)
+            session.commit()
+    except jwt.InvalidTokenError:
+        return
+
+def login_identity(school_slug: str, email: str) -> str:
+    raw = school_slug.strip().lower() + ':' + email.strip().lower()
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+def check_login_limit(session: Session, identifier: str):
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    count = session.scalar(select(func.count()).select_from(LoginFailure).where(
+        LoginFailure.identity_hash == identifier, LoginFailure.created_at >= cutoff))
+    if count >= 5:
+        raise HTTPException(429, 'Too many attempts. Try again after 15 minutes.')
+
+def failed_login(session: Session, identifier: str):
+    session.add(LoginFailure(identity_hash=identifier))
+    session.commit()
+
 
 def current(request: Request, session: Session=Depends(db)):
     token = request.cookies.get('session')
     if not token: raise HTTPException(401, 'Login required')
-    try: payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256']); uid=int(payload['sub']); sid=int(payload['school_id'])
+    try: payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256']); uid=int(payload['sub']); sid=int(payload['school_id']); nonce=payload['jti']
     except (jwt.InvalidTokenError, ValueError, KeyError): raise HTTPException(401, 'Invalid session')
+    record=session.scalar(select(ActiveSession).where(ActiveSession.token_hash==hashlib.sha256(nonce.encode()).hexdigest(),ActiveSession.user_id==uid,ActiveSession.school_id==sid))
+    if not record or record.expires_at.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):
+        raise HTTPException(401, 'Session expired or revoked')
     membership = session.scalar(select(Membership).where(Membership.user_id==uid, Membership.school_id==sid))
     school = session.get(School, sid)
     user=session.get(User,uid)
@@ -218,21 +271,36 @@ def register(data:Register, response:Response, s:Session=Depends(db)):
     if s.scalar(select(User).where(User.email==data.email.lower())): raise HTTPException(409,'Email already registered; contact support to join another school')
     school=School(name=data.school_name,slug=data.slug); user=User(email=data.email.lower(),password_hash=ph.hash(data.password))
     s.add_all([school,user]); s.flush(); s.add(Membership(school_id=school.id,user_id=user.id,role='school_admin'))
-    s.commit(); response.set_cookie('session',issue_token(user.id,school.id),httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
+    s.commit(); token=issue_token(user.id,school.id,s);s.commit()
+    response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school_id':school.id,'school':school.name,'role':'school_admin'}
 @app.post('/api/login')
 def login(data:Login,response:Response,s:Session=Depends(db)):
+    identity = login_identity(data.school_slug, data.email)
+    check_login_limit(s, identity)
     school=s.scalar(select(School).where(School.slug==data.school_slug))
     user=s.scalar(select(User).where(User.email==data.email.lower()))
-    if not user or not school: raise HTTPException(401,'Invalid credentials')
-    try: ph.verify(user.password_hash,data.password)
-    except Exception: raise HTTPException(401,'Invalid credentials')
+    if not user or not school:
+        failed_login(s, identity)
+        raise HTTPException(401,'Invalid credentials')
+    try:
+        ph.verify(user.password_hash,data.password)
+    except Exception:
+        failed_login(s,identity)
+        raise HTTPException(401,'Invalid credentials')
     mem=s.scalar(select(Membership).where(Membership.school_id==school.id,Membership.user_id==user.id))
-    if not mem or not mem.active or not user.active or school.status!='active': raise HTTPException(403,'School access denied')
-    response.set_cookie('session',issue_token(user.id,school.id),httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
+    if not mem or not mem.active or not user.active or school.status!='active':
+        raise HTTPException(403,'School access denied')
+    s.query(LoginFailure).filter(LoginFailure.identity_hash==identity).delete(synchronize_session=False)
+    token=issue_token(user.id,school.id,s)
+    s.commit()
+    response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school':school.name,'role':mem.role}
 @app.post('/api/logout')
-def logout(response:Response): response.delete_cookie('session'); return {'ok':True}
+def logout(response:Response,request:Request,s:Session=Depends(db)):
+    revoke_token(request.cookies.get('session'),s)
+    response.delete_cookie('session')
+    return {'ok':True}
 @app.get('/api/me')
 def me(ctx=Depends(current)): return ctx
 @app.get('/api/learners')
