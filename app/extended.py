@@ -126,7 +126,13 @@ def assign_case(case_id:int,data:CaseAssign,s:Session=Depends(m.db),ctx=Depends(
     if data.assigned_user_id is not None:
         membership=s.scalar(select(m.Membership).where(m.Membership.school_id==ctx["sid"],m.Membership.user_id==data.assigned_user_id,m.Membership.active==True))
         if not membership:raise HTTPException(400,"Assignee is not an active member of this school")
+    old_assignee=c.assigned_user_id
     c.assigned_user_id=data.assigned_user_id
+    if old_assignee != data.assigned_user_id:
+        from app.operations import CaseEvent
+        s.add(CaseEvent(school_id=ctx["sid"],case_id=c.id,author_user_id=ctx["uid"],
+            kind="note",note="Assigned staff changed from "+str(old_assignee or "unassigned")+
+            " to "+str(data.assigned_user_id or "unassigned")))
     m.log(s,ctx,"assign","case",c.id);s.commit()
     return {"ok":True}
 
