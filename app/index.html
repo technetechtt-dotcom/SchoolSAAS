@@ -67,6 +67,7 @@ const btn=(name,action,id="",secondary=true)=>'<button type="button" class="'+(s
 const head=(title,desc,buttons="")=>'<div class="toolbar"><div><h1>'+esc(title)+'</h1><p class="subheading subtle">'+esc(desc)+'</p></div><div class="actions">'+buttons+'</div></div>';
 const panel=(body,title="")=>'<div class="panel">'+(title?'<h2>'+esc(title)+'</h2>':"")+body+'</div>';
 const table=(cols,rows)=>rows.length?'<div class="table-wrap"><table><thead><tr>'+cols.map(x=>'<th>'+esc(x)+'</th>').join("")+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(cell=>'<td>'+cell+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty">No records found. Add a record or change the search.</div>';
+const bars=obj=>{const entries=Object.entries(obj);if(!entries.length)return '<div class="empty">No data yet</div>';const max=Math.max(1,...entries.map(x=>Number(x[1])));return '<div class="stack">'+entries.map(x=>'<div><div class="toolbar" style="margin-bottom:4px"><span>'+esc(x[0])+'</span><strong>'+esc(x[1])+'</strong></div><div style="height:10px;border-radius:20px;background:#edf2fc;overflow:hidden"><div style="background:#3b72dc;height:100%;width:'+Math.round(Number(x[1])/max*100)+'%"></div></div></div>').join("")+'</div>'};
 const plain=x=>esc(x), pill=x=>'<span class="pill">'+esc(x)+'</span>';
 const link=(text,page,id)=>'<button class="linkbtn" type="button" data-go="'+esc(page)+(id?"/"+esc(id):"")+'">'+esc(text)+'</button>';
 const jsonForm=(id,body,label="Save")=>'<form data-form="'+esc(id)+'">'+body+'<div class="form-actions"><button type="button" class="secondary" data-action="close">Cancel</button><button type="submit">'+esc(label)+'</button></div></form>';
@@ -99,11 +100,13 @@ let directoryState={q:"",offset:0,total:0};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Educator workspace","Record behaviour concerns and review your own reports",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
- const [d,n]=await Promise.all([api("dashboard"),api("notifications")]);
+ const [d,n,stats]=await Promise.all([api("dashboard"),api("notifications"),api("analytics/overview")]);
  $("page").innerHTML=head(d.school+" overview","Your school's learner support and discipline summary",btn("Report incident","create-incident","",false))+
  '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Incident locations")+
- panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>';
+ panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>'+
+ '<div class="cards"><div class="metric"><small>Repeat-behaviour rate</small><strong>'+stats.repeat_rate+'%</strong></div><div class="metric"><small>Interventions recorded</small><strong>'+stats.interventions+'</strong></div><div class="metric"><small>Pending reviews</small><strong>'+stats.pending_reviews+'</strong></div></div>'+
+ '<div class="grid2">'+panel(bars(stats.months),"Monthly trend")+panel(bars(stats.severity),"Severity levels")+'</div>';
 }
 async function learnerDirectory(){
  const state=directoryState;
@@ -183,9 +186,9 @@ async function details(key,id){
  }
 }
 async function reports(){
- const r=await api("reports/summary");const make=key=>table(["Category","Incident count"],Object.entries(r[key]).map(x=>[plain(x[0]),plain(x[1])]));
+ const [r,stats]=await Promise.all([api("reports/summary"),api("analytics/overview")]);const make=key=>table(["Category","Incident count"],Object.entries(r[key]).map(x=>[plain(x[0]),plain(x[1])]));
  $("page").innerHTML=head("Reports","School-scoped incident summaries. Exports are limited to authorised administrators.",admin()?'<a class="btn secondary" href="/api/reports/incidents.csv">Download CSV</a>':"")+
- '<div class="grid2">'+panel(make("by_grade"),"By grade")+panel(make("by_offence"),"By offence")+'</div>'+panel(make("by_location"),"By location");
+ '<div class="grid2">'+panel(bars(r.by_grade),"Incidents by grade")+panel(bars(r.by_offence),"Incidents by offence")+'</div>'+panel(bars(stats.months),"Monthly trend")+'<div class="grid2">'+panel(make("by_grade"),"Grade totals")+panel(make("by_offence"),"Offence totals")+'</div>'+panel(make("by_location"),"By location");
 }
 async function settings(){
  const d=await api("settings");$("page").innerHTML=head("School settings","Configure reviewed behaviour thresholds")+
