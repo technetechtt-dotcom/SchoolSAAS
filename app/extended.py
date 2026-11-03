@@ -112,7 +112,7 @@ def case_detail(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAG
             "status":c.status,"assigned_user_id":c.assigned_user_id,
             "incident_ids":[x.incident_id for x in linked]}
 
-@router.get("/cases/eligible-assignees")
+@router.get("/case-assignees")
 def eligible_assignees(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     """Only minimal staff data needed for assigning a case, not full membership admin."""
     q=select(m.Membership,m.User).join(m.User,m.User.id==m.Membership.user_id).where(
