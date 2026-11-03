@@ -34,7 +34,7 @@ textarea{min-height:100px;resize:vertical}form{display:grid;gap:13px}.form-actio
 @media(max-width:850px){#menu-toggle{display:inline-flex}.shell{grid-template-columns:1fr}aside{display:none;position:fixed;inset:62px auto 0 0;width:min(300px,85vw);z-index:5;box-shadow:20px 0 30px #1a274135;overflow-y:auto}aside.open{display:block}main{padding:18px}.cards{grid-template-columns:1fr 1fr}}
 @media(max-width:610px){.auth-grid,.grid2,.cards{grid-template-columns:1fr}header{padding:12px}#account small{display:none}main{padding:13px}.panel{padding:15px}h1{font-size:21px}.table-wrap{margin:0 -6px}th,td{padding:10px 7px}}
 </style></head><body>
-<header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div id="account"></div></header>
+<header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div class="actions"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." style="max-width:210px;min-height:35px" hidden><div id="account"></div></div></header>
 <section id="login-screen"><div class="auth-grid">
 <div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="venus-primary"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button></p><p class="subtle">Password recovery requires a school administrator while reset email delivery is being developed.</p></div>
 <div class="panel"><h2>Register a school</h2><p class="subtle">Create an isolated demonstration workspace. Use fictional learner records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" pattern="[a-z0-9-]{3,40}" required placeholder="example-school"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
@@ -82,8 +82,8 @@ async function api(path,method="GET",data){
  if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"Request failed ("+response.status+")");
  return result;
 }
-function modal(title,body){$("modal-title").textContent=title;$("modal-body").innerHTML=body;$("dialog").classList.add("open");$("dialog").querySelector("input,select,textarea,button")?.focus()}
-function close(){ $("dialog").classList.remove("open");$("modal-body").innerHTML="";unsaved=false}
+function modal(title,body){unsaved=false;$("modal-title").textContent=title;$("modal-body").innerHTML=body;$("dialog").classList.add("open");$("dialog").querySelector("input,select,textarea,button")?.focus()}
+function close(){if(unsaved&&!confirm("Discard unsaved changes?"))return;$("dialog").classList.remove("open");$("modal-body").innerHTML="";unsaved=false}
 function path(){return decodeURIComponent(location.hash.replace(/^#\/?/,""))||"dashboard"}
 function navigate(value){if(unsaved&&!confirm("Discard unsaved form changes?"))return;unsaved=false;location.hash="#/"+value;render()}
 function navigation(){
@@ -296,7 +296,7 @@ async function submitForm(f){
  try{const result=await api(url,method,data);close();
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
- toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");navigate(go);
+ toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
 }
 async function schoolSelector(){
@@ -311,7 +311,7 @@ async function schoolSelector(){
  }catch(e){toast(e.message,true)}
 }
 async function signIn(type,f){
- try{await api(type,"POST",getData(f));user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard");schoolSelector()}
+ try{await api(type,"POST",getData(f));user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard");schoolSelector()}
  catch(e){toast(e.message,true)}
 }
 document.addEventListener("submit",e=>{e.preventDefault();const f=e.target;if(f.id==="login"||f.id==="register")signIn(f.id,f);else if(f.dataset.form)submitForm(f)});
@@ -326,7 +326,9 @@ document.addEventListener("click",async e=>{
  if(e.target.id==="close-dialog")close();
  if(e.target.id==="menu-toggle")$("sidebar").classList.toggle("open");
 });
-document.addEventListener("input",e=>{if(e.target.closest("#dialog form"))unsaved=true});
+document.addEventListener("input",e=>{if(e.target.closest("#dialog form")||e.target.closest('[data-form="settings"]')||e.target.closest('[data-form="academic"]'))unsaved=true});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("dialog").classList.contains("open"))close();if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}});
+window.addEventListener("beforeunload",e=>{if(unsaved){e.preventDefault();e.returnValue=""}});
 window.addEventListener("hashchange",()=>render());
 (async()=>{try{user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
 })();
