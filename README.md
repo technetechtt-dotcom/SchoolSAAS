@@ -44,3 +44,9 @@ Every school-owned record includes `school_id`; current membership is resolved f
 
 ## Legal design constraints
 South African Schools Act and BELA amendments require school-approved codes and fair, age-appropriate processes; POPIA has special conditions for children's personal information. A school and qualified legal/privacy advisers must approve the live configuration and processing arrangements.
+
+
+## v0.2 changes (November 2026)
+Added CSRF double-submit checks, basic security response headers, active memberships, class-scoped educator learner access, restricted navigation, staff invitation/acceptance, learner edits, case status changes, incident review, review tasks for flagged incidents, parent communication records, school-configurable repeat threshold and management summary API.
+
+**Still a development prototype.** Not production safe: no real email delivery, MFA, rate limits, Alembic migrations, complete relational tenant constraints, full backup/recovery tests, consent/retention workflows, billing, or external audit. Existing databases require schema migration before upgrading; do not run against real records. Use fictitious learner data only.

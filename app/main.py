@@ -1,7 +1,7 @@
 """Multi-school discipline SaaS MVP; demonstration only, not production approved."""
 from datetime import datetime, timezone, timedelta
 from collections import Counter
-import os, re, secrets
+import os, re, secrets, hashlib, hmac
 import jwt
 from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, Cookie
@@ -33,6 +33,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(250))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 class Membership(Base):
     __tablename__ = 'memberships'
     __table_args__ = (UniqueConstraint('school_id','user_id'),)
@@ -40,6 +41,8 @@ class Membership(Base):
     school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
     role: Mapped[str] = mapped_column(String(30))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    assigned_class: Mapped[str | None] = mapped_column(String(30), nullable=True)
 class Learner(Base):
     __tablename__ = 'learners'
     __table_args__ = (UniqueConstraint('school_id','admission_no'),)
@@ -72,6 +75,8 @@ class Incident(Base):
     immediate_action: Mapped[str] = mapped_column(String(140))
     status: Mapped[str] = mapped_column(String(40), default='reported')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    review_status: Mapped[str] = mapped_column(String(30), default='pending')
+    review_notes: Mapped[str] = mapped_column(Text, default='')
 class Case(Base):
     __tablename__ = 'cases'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -106,6 +111,44 @@ class Audit(Base):
     subject_id: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class StaffInvite(Base):
+    __tablename__ = 'staff_invites'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
+    email: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(30))
+    assigned_class: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class ParentContact(Base):
+    __tablename__ = 'parent_contacts'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
+    learner_id: Mapped[int] = mapped_column(ForeignKey('learners.id'))
+    method: Mapped[str] = mapped_column(String(40))
+    purpose: Mapped[str] = mapped_column(String(200))
+    outcome: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class ReviewTask(Base):
+    __tablename__ = 'review_tasks'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey('incidents.id'))
+    reason: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(30), default='open')
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+class SchoolSetting(Base):
+    __tablename__ = 'school_settings'
+    __table_args__ = (UniqueConstraint('school_id','key'),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
+    key: Mapped[str] = mapped_column(String(60))
+    value: Mapped[str] = mapped_column(String(200))
+
 @app.on_event('startup')
 def startup(): Base.metadata.create_all(engine)  # replace with Alembic migrations before deployment
 
@@ -122,8 +165,9 @@ def current(request: Request, session: Session=Depends(db)):
     except (jwt.InvalidTokenError, ValueError, KeyError): raise HTTPException(401, 'Invalid session')
     membership = session.scalar(select(Membership).where(Membership.user_id==uid, Membership.school_id==sid))
     school = session.get(School, sid)
-    if not membership or not school or school.status!='active': raise HTTPException(403, 'School access denied')
-    return {'uid':uid,'sid':sid,'role':membership.role,'school':school.name}
+    user=session.get(User,uid)
+    if not membership or not membership.active or not user or not user.active or not school or school.status!='active': raise HTTPException(403, 'School access denied')
+    return {'uid':uid,'sid':sid,'role':membership.role,'school':school.name,'assigned_class':membership.assigned_class}
 
 def require(*roles):
     def dependency(ctx=Depends(current)):
@@ -184,7 +228,7 @@ def login(data:Login,response:Response,s:Session=Depends(db)):
     try: ph.verify(user.password_hash,data.password)
     except Exception: raise HTTPException(401,'Invalid credentials')
     mem=s.scalar(select(Membership).where(Membership.school_id==school.id,Membership.user_id==user.id))
-    if not mem or school.status!='active': raise HTTPException(403,'School access denied')
+    if not mem or not mem.active or not user.active or school.status!='active': raise HTTPException(403,'School access denied')
     response.set_cookie('session',issue_token(user.id,school.id),httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school':school.name,'role':mem.role}
 @app.post('/api/logout')
@@ -193,7 +237,11 @@ def logout(response:Response): response.delete_cookie('session'); return {'ok':T
 def me(ctx=Depends(current)): return ctx
 @app.get('/api/learners')
 def learners(s:Session=Depends(db),ctx=Depends(current)):
-    return [dict(id=x.id,admission_no=x.admission_no,name=x.first_name+' '+x.surname,grade=x.grade,class_name=x.class_name) for x in s.scalars(select(Learner).where(Learner.school_id==ctx['sid']).order_by(Learner.surname)).all()]
+    q=select(Learner).where(Learner.school_id==ctx['sid'])
+    if ctx['role']=='educator':
+        if not ctx['assigned_class']:return []
+        q=q.where(Learner.class_name==ctx['assigned_class'])
+    return [dict(id=x.id,admission_no=x.admission_no,name=x.first_name+' '+x.surname,grade=x.grade,class_name=x.class_name) for x in s.scalars(q.order_by(Learner.surname).limit(500)).all()]
 @app.post('/api/learners',status_code=201)
 def add_learner(data:LearnerIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
     if s.scalar(select(Learner).where(Learner.school_id==ctx['sid'],Learner.admission_no==data.admission_no)): raise HTTPException(409,'Admission number exists')
@@ -215,10 +263,14 @@ def add_incident(data:IncidentIn,s:Session=Depends(db),ctx=Depends(require('scho
     learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
     offence=s.scalar(select(Offence).where(Offence.id==data.offence_id,Offence.school_id==ctx['sid']))
     if not learner or not offence: raise HTTPException(404,'Learner or offence not found at this school')
+    if ctx['role']=='educator' and (not ctx['assigned_class'] or learner.class_name!=ctx['assigned_class']):raise HTTPException(403,'Learner is outside your assigned class')
     i=Incident(school_id=ctx['sid'],reporter_id=ctx['uid'],**data.model_dump());s.add(i);s.flush()
     same=s.scalar(select(func.count()).select_from(Incident).where(Incident.school_id==ctx['sid'],Incident.learner_id==i.learner_id,Incident.offence_id==i.offence_id,Incident.status!='withdrawn'))
+    setting=s.scalar(select(SchoolSetting.value).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
+    flagged=same>=int(setting or '3') or offence.severity>=3
+    if flagged:s.add(ReviewTask(school_id=ctx['sid'],incident_id=i.id,reason='Repeat review' if same>=int(setting or '3') else 'Serious incident review',due_at=datetime.now(timezone.utc)+timedelta(days=2)))
     log(s,ctx,'create','incident',i.id);s.commit()
-    return {'id':i.id,'same_offence_count':same,'requires_review':same>=3 or offence.severity>=3,'message':'Review flag only; no automatic punishment'}
+    return {'id':i.id,'same_offence_count':same,'requires_review':flagged,'message':'Review flag only; no automatic punishment'}
 @app.post('/api/cases',status_code=201)
 def add_case(data:CaseIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
     learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
@@ -245,3 +297,179 @@ def audit(s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))
     return [{'action':a.action,'subject':a.subject_type,'subject_id':a.subject_id,'at':a.created_at.isoformat()} for a in s.scalars(select(Audit).where(Audit.school_id==ctx['sid']).order_by(Audit.id.desc()).limit(100)).all()]
 @app.get('/')
 def home():return FileResponse('app/index.html')
+
+
+# Phase 0.2: basic CSRF and role-scoped management workflows. Pilot-use only.
+@app.middleware('http')
+async def csrf_and_headers(request:Request,call_next):
+    if request.method in ('POST','PUT','PATCH','DELETE') and request.url.path.startswith('/api/'):
+        origin=request.headers.get('origin')
+        if origin:
+            from urllib.parse import urlsplit
+            target=urlsplit(origin)
+            if target.netloc!=request.headers.get('host') or target.scheme not in ('https','http'):
+                return Response('Origin not allowed',status_code=403)
+        if request.cookies.get('session') and request.url.path not in ('/api/register','/api/login'):
+            c=request.cookies.get('csrf_token','')
+            h=request.headers.get('x-csrf-token','')
+            if not c or not h or not hmac.compare_digest(c,h):
+                return Response('CSRF token required',status_code=403)
+    resp=await call_next(request)
+    if request.url.path.startswith('/api/') and not request.cookies.get('csrf_token'):
+        resp.set_cookie('csrf_token',secrets.token_urlsafe(32),samesite='lax',
+            secure=os.getenv('COOKIE_SECURE','false')=='true',httponly=False)
+    resp.headers['X-Content-Type-Options']='nosniff'
+    resp.headers['X-Frame-Options']='DENY'
+    resp.headers['Referrer-Policy']='strict-origin-when-cross-origin'
+    return resp
+
+class InviteRequest(BaseModel):
+    email:str=Field(min_length=5,max_length=255)
+    role:str
+    assigned_class:str|None=None
+class InviteAccept(BaseModel):
+    token:str
+    password:str=Field(min_length=12,max_length=128)
+class MemberPatch(BaseModel):
+    active:bool
+    role:str
+    assigned_class:str|None=None
+class LearnerPatch(BaseModel):
+    grade:str|None=None
+    class_name:str|None=None
+    active:bool|None=None
+class ReviewPatch(BaseModel):
+    status:str
+    notes:str=Field(default='',max_length=2000)
+class StatusPatch(BaseModel):
+    status:str
+class ContactInput(BaseModel):
+    learner_id:int
+    method:str=Field(min_length=1,max_length=40)
+    purpose:str=Field(min_length=1,max_length=200)
+    outcome:str=Field(min_length=1,max_length=200)
+class RuleInput(BaseModel):
+    repeat_threshold:int=Field(ge=2,le=10)
+
+STAFF_ROLES={'school_admin','principal','smt','hod','educator'}
+
+@app.get('/api/members')
+def members(s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
+    q=select(Membership,User).join(User,Membership.user_id==User.id).where(Membership.school_id==ctx['sid'])
+    return [{'id':m.id,'email':u.email,'role':m.role,'active':m.active,'assigned_class':m.assigned_class} for m,u in s.execute(q).all()]
+
+@app.post('/api/invitations',status_code=201)
+def invite(data:InviteRequest,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
+    if data.role not in STAFF_ROLES or (data.role=='school_admin' and ctx['role']!='school_admin'):
+        raise HTTPException(400,'Role not permitted')
+    token=secrets.token_urlsafe(32)
+    i=StaffInvite(school_id=ctx['sid'],email=data.email.lower(),role=data.role,
+        assigned_class=data.assigned_class,token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc)+timedelta(days=3))
+    s.add(i);s.flush();log(s,ctx,'invite','staff_invite',i.id);s.commit()
+    return {'token':token,'expires_in_hours':72,'notice':'Share this token with the intended staff member privately.'}
+
+@app.post('/api/invitations/accept',status_code=201)
+def accept_invite(data:InviteAccept,s:Session=Depends(db)):
+    digest=hashlib.sha256(data.token.encode()).hexdigest()
+    inv=s.scalar(select(StaffInvite).where(StaffInvite.token_hash==digest))
+    if not inv or inv.used or inv.expires_at.replace(tzinfo=timezone.utc)<datetime.now(timezone.utc):
+        raise HTTPException(400,'Invalid or expired invitation')
+    school=s.get(School,inv.school_id)
+    if not school or school.status!='active':raise HTTPException(403,'School inactive')
+    user=s.scalar(select(User).where(User.email==inv.email))
+    if user:
+        try:ph.verify(user.password_hash,data.password)
+        except Exception:raise HTTPException(401,'Invalid existing-user password')
+    else:
+        user=User(email=inv.email,password_hash=ph.hash(data.password));s.add(user);s.flush()
+    if s.scalar(select(Membership).where(Membership.school_id==inv.school_id,Membership.user_id==user.id)):
+        raise HTTPException(409,'Already a member')
+    s.add(Membership(school_id=inv.school_id,user_id=user.id,role=inv.role,assigned_class=inv.assigned_class))
+    inv.used=True;s.commit();return {'school':school.name,'message':'Invitation accepted; sign in normally'}
+
+@app.patch('/api/members/{member_id}')
+def patch_member(member_id:int,data:MemberPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
+    m=s.scalar(select(Membership).where(Membership.id==member_id,Membership.school_id==ctx['sid']))
+    if not m:raise HTTPException(404,'Member not found')
+    if data.role not in STAFF_ROLES or (data.role=='school_admin' and ctx['role']!='school_admin'):
+        raise HTTPException(400,'Role not permitted')
+    if m.role=='school_admin' and ctx['role']!='school_admin':raise HTTPException(403,'Admin required')
+    if m.user_id==ctx['uid'] and (not data.active or data.role!=m.role):raise HTTPException(400,'Cannot disable or demote self')
+    m.active=data.active;m.role=data.role;m.assigned_class=data.assigned_class
+    log(s,ctx,'update','membership',m.id);s.commit();return {'ok':True}
+
+@app.patch('/api/learners/{learner_id}')
+def patch_learner(learner_id:int,data:LearnerPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    x=s.scalar(select(Learner).where(Learner.id==learner_id,Learner.school_id==ctx['sid']))
+    if not x:raise HTTPException(404,'Learner not found')
+    for k,v in data.model_dump(exclude_none=True).items():setattr(x,k,v)
+    log(s,ctx,'update','learner',x.id);s.commit();return {'ok':True}
+
+@app.patch('/api/incidents/{incident_id}/review')
+def patch_incident(incident_id:int,data:ReviewPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    if data.status not in ('pending','verified','disputed','referred','resolved','withdrawn'):
+        raise HTTPException(400,'Invalid status')
+    i=s.scalar(select(Incident).where(Incident.id==incident_id,Incident.school_id==ctx['sid']))
+    if not i:raise HTTPException(404,'Incident not found')
+    i.review_status=data.status;i.review_notes=data.notes
+    if data.status in ('resolved','withdrawn'):i.status=data.status
+    log(s,ctx,'review','incident',i.id);s.commit();return {'ok':True}
+
+@app.patch('/api/cases/{case_id}')
+def patch_case(case_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    if data.status not in ('open','monitoring','hod_review','smt_review','formal_process','awaiting_outcome','closed','reopened'):
+        raise HTTPException(400,'Invalid status')
+    c=s.scalar(select(Case).where(Case.id==case_id,Case.school_id==ctx['sid']))
+    if not c:raise HTTPException(404,'Case not found')
+    c.status=data.status;log(s,ctx,'update','case',c.id);s.commit();return {'ok':True}
+
+@app.get('/api/interventions')
+def list_interventions(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    return [{'id':i.id,'incident_id':i.incident_id,'type':i.type,'outcome':i.outcome,'notes':i.notes}
+        for i in s.scalars(select(Intervention).where(Intervention.school_id==ctx['sid']).limit(200)).all()]
+
+@app.post('/api/parent-contacts',status_code=201)
+def add_contact(data:ContactInput,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
+    if not learner:raise HTTPException(404,'Learner not found')
+    item=ParentContact(school_id=ctx['sid'],**data.model_dump());s.add(item);s.flush()
+    log(s,ctx,'create','parent_contact',item.id);s.commit();return {'id':item.id}
+
+@app.get('/api/parent-contacts')
+def list_contacts(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    return [{'id':x.id,'learner_id':x.learner_id,'method':x.method,'purpose':x.purpose,'outcome':x.outcome}
+        for x in s.scalars(select(ParentContact).where(ParentContact.school_id==ctx['sid']).limit(200)).all()]
+
+@app.get('/api/review-tasks')
+def list_review_tasks(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    return [{'id':x.id,'incident_id':x.incident_id,'reason':x.reason,'status':x.status,'due_at':x.due_at.isoformat()}
+        for x in s.scalars(select(ReviewTask).where(ReviewTask.school_id==ctx['sid']).limit(200)).all()]
+
+@app.patch('/api/review-tasks/{task_id}')
+def patch_review_task(task_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    if data.status not in ('open','in_progress','completed','cancelled'):raise HTTPException(400,'Invalid status')
+    task=s.scalar(select(ReviewTask).where(ReviewTask.id==task_id,ReviewTask.school_id==ctx['sid']))
+    if not task:raise HTTPException(404,'Task not found')
+    task.status=data.status;log(s,ctx,'update','review_task',task.id);s.commit();return {'ok':True}
+
+@app.get('/api/settings')
+def get_settings(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt'))):
+    v=s.scalar(select(SchoolSetting.value).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
+    return {'repeat_threshold':int(v or '3')}
+
+@app.put('/api/settings')
+def set_settings(data:RuleInput,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
+    r=s.scalar(select(SchoolSetting).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
+    if not r:s.add(SchoolSetting(school_id=ctx['sid'],key='repeat_threshold',value=str(data.repeat_threshold)))
+    else:r.value=str(data.repeat_threshold)
+    log(s,ctx,'update','school_settings',ctx['sid']);s.commit();return {'ok':True}
+
+@app.get('/api/reports/summary')
+def reports(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    sid=ctx['sid'];items=s.scalars(select(Incident).where(Incident.school_id==sid)).all()
+    offence_names={o.id:o.name for o in s.scalars(select(Offence).where(Offence.school_id==sid)).all()}
+    grades={l.id:l.grade for l in s.scalars(select(Learner).where(Learner.school_id==sid)).all()}
+    return {'by_offence':dict(Counter(offence_names.get(i.offence_id,'Unknown') for i in items)),
+        'by_grade':dict(Counter(grades.get(i.learner_id,'Unknown') for i in items)),
+        'by_location':dict(Counter(i.location for i in items))}

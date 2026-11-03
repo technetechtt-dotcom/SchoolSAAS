@@ -18,10 +18,10 @@ def test_school_boundaries():
     a=TestClient(main.app);b=TestClient(main.app)
     assert a.post('/api/register',json={'school_name':'School One','slug':'school-one','email':'a@example.test','password':'this-is-a-demo-pass-123'}).status_code==201
     assert b.post('/api/register',json={'school_name':'School Two','slug':'school-two','email':'b@example.test','password':'this-is-a-demo-pass-123'}).status_code==201
-    ra=a.post('/api/learners',json={'admission_no':'001','first_name':'Private','surname':'Learner','grade':'4','class_name':'4A'})
+    ra=a.post('/api/learners',headers={'X-CSRF-Token':a.cookies.get('csrf_token')},json={'admission_no':'001','first_name':'Private','surname':'Learner','grade':'4','class_name':'4A'})
     assert ra.status_code==201
     assert b.get('/api/learners').json()==[]
-    assert b.post('/api/offences',json={'code':'B001','name':'Disruption','category':'Conduct','severity':1}).status_code==201
-    assert b.post('/api/incidents',json={'learner_id':ra.json()['id'],'offence_id':1,'location':'Classroom','description':'Test','immediate_action':'Monitor'}).status_code==404
+    assert b.post('/api/offences',headers={'X-CSRF-Token':b.cookies.get('csrf_token')},json={'code':'B001','name':'Disruption','category':'Conduct','severity':1}).status_code==201
+    assert b.post('/api/incidents',headers={'X-CSRF-Token':b.cookies.get('csrf_token')},json={'learner_id':ra.json()['id'],'offence_id':1,'location':'Classroom','description':'Test','immediate_action':'Monitor'}).status_code==404
     assert a.get('/api/dashboard').json()['learners']==1
     assert b.get('/api/dashboard').json()['learners']==0
