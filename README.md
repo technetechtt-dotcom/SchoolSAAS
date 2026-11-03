@@ -73,3 +73,17 @@ Subscriptions are informational; no payments are collected. Document records are
 
 ### New screens
 Overview, learners and learner profiles, classes, incidents and details, cases and details, interventions, appeals, tasks, parent contacts, meetings, document drafts, reports, offences, staff administration, settings, subscription status, audit log and notifications.
+
+## v0.4 security and case workflow increment (3 November 2026)
+- Server-side revocable session records: logout invalidates the token; switching school creates a new session and revokes the previous one.
+- Login failures are limited to five per school/email identity in a rolling 15-minute window (basic application-level throttling, not distributed edge rate limiting).
+- HOD/SMT case assignment now uses a restricted eligible-assignees endpoint, not the administrator-only member directory.
+- CSV incident export neutralises leading spreadsheet formula characters in potentially user-supplied cells.
+- New automated regression coverage for session revocation, failed login throttling, HOD case assignment visibility, school switch revocation and CSV safety.
+- All changes live on main. Check GitHub Actions after each change.
+
+### Upgrade caveats
+Existing login sessions from previous releases will no longer be accepted because they lack a stored session identifier. Users must sign in again. The new active_sessions and login_failures tables are created on startup for the development setup; formal Alembic migrations are still required for a production rollout. A staged upgrade and backup remain essential.
+
+### Still outstanding
+Multi-factor authentication, verified email invitations and password recovery, network-level rate limits, tenant-safe relational constraints, database migration framework, session/device management screen, full end-to-end browser tests, commercial billing, incident lifecycle and POPIA compliance assessment are not yet complete.
