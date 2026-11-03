@@ -315,3 +315,20 @@ def update_academic_settings(data:AcademicSettings,s:Session=Depends(m.db),ctx=D
         else:setting.value=str(value)
     m.log(s,ctx,"update","academic_settings",ctx["sid"]);s.commit()
     return {"ok":True}
+
+
+class OffencePatch(BaseModel):
+    name:str=Field(min_length=1,max_length=160)
+    category:str=Field(min_length=1,max_length=100)
+    severity:int=Field(ge=1,le=4)
+
+@router.patch("/offences/{offence_id}")
+def update_offence(offence_id:int,data:OffencePatch,s:Session=Depends(m.db),
+                   ctx=Depends(m.require("school_admin","principal","smt"))):
+    offence=school_record(s,m.Offence,offence_id,ctx["sid"])
+    referenced=s.scalar(select(func.count()).select_from(m.Incident).where(
+        m.Incident.school_id==ctx["sid"],m.Incident.offence_id==offence.id))
+    if referenced:raise HTTPException(409,"This offence is referenced by incidents. Create a new version/code instead.")
+    offence.name=data.name;offence.category=data.category;offence.severity=data.severity
+    m.log(s,ctx,"update","offence",offence.id);s.commit()
+    return {"ok":True}
