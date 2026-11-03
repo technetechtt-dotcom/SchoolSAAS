@@ -203,6 +203,7 @@ def add_document(data:DocIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAG
 
 @router.get("/subscription")
 def subscription(ctx=Depends(m.require(*ADMIN)),s:Session=Depends(m.db)):
-    school=school_record(s,m.School,ctx["sid"],ctx["sid"])
+    school=s.get(m.School,ctx["sid"])
+    if not school:raise HTTPException(404,"School not found")
     return {"plan":school.plan,"status":school.status,"billing_enabled":False,
             "message":"Billing not configured. No payments are collected."}
