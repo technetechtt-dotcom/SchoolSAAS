@@ -584,3 +584,5 @@ from app.extended import router as extended_router
 app.include_router(extended_router)
 from app.operations import router as operations_router
 app.include_router(operations_router)
+from app.account_recovery import router as recovery_router
+app.include_router(recovery_router)
