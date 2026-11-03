@@ -33,6 +33,7 @@ textarea{min-height:100px;resize:vertical}form{display:grid;gap:13px}.form-actio
 #app-shell[hidden],#login-screen[hidden]{display:none}
 @media(max-width:850px){#menu-toggle{display:inline-flex}.shell{grid-template-columns:1fr}aside{display:none;position:fixed;inset:62px auto 0 0;width:min(300px,85vw);z-index:5;box-shadow:20px 0 30px #1a274135;overflow-y:auto}aside.open{display:block}main{padding:18px}.cards{grid-template-columns:1fr 1fr}}
 @media(max-width:610px){.auth-grid,.grid2,.cards{grid-template-columns:1fr}header{padding:12px}#account small{display:none}main{padding:13px}.panel{padding:15px}h1{font-size:21px}.table-wrap{margin:0 -6px}th,td{padding:10px 7px}}
+@media(max-width:610px){header{height:66px;min-height:66px;gap:6px}#global-search{display:none}#account small{display:none}aside{top:66px!important}.brand{font-size:18px}#account button{padding:8px}}
 </style></head><body>
 <header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div class="actions"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." style="max-width:210px;min-height:35px" hidden><div id="account"></div></div></header>
 <section id="login-screen"><div class="auth-grid">
