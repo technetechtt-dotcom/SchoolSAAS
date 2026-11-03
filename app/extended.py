@@ -264,3 +264,54 @@ def analytics(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
         "interventions":len(interventions),
         "completed_interventions":sum(x.outcome in ("improved","partially_improved","closed") for x in interventions),
         "pending_reviews":outstanding}
+
+
+class BulkLearnerRow(BaseModel):
+    admission_no:str=Field(min_length=1,max_length=80)
+    first_name:str=Field(min_length=1,max_length=120)
+    surname:str=Field(min_length=1,max_length=120)
+    grade:str=Field(min_length=1,max_length=25)
+    class_name:str=Field(min_length=1,max_length=30)
+
+class BulkLearnerIn(BaseModel):
+    rows:list[BulkLearnerRow]=Field(min_length=1,max_length=1000)
+
+@router.post("/learners/import",status_code=201)
+def bulk_import_learners(data:BulkLearnerIn,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    existing=set(s.scalars(select(m.Learner.admission_no).where(m.Learner.school_id==ctx["sid"])).all())
+    created=0;skipped=[]
+    for idx,row in enumerate(data.rows,1):
+        admission=row.admission_no.strip()
+        if admission in existing:
+            skipped.append({"row":idx,"admission_no":admission,"reason":"Duplicate admission number"})
+            continue
+        existing.add(admission)
+        s.add(m.Learner(school_id=ctx["sid"],admission_no=admission,
+            first_name=row.first_name.strip(),surname=row.surname.strip(),
+            grade=row.grade.strip(),class_name=row.class_name.strip()))
+        created+=1
+    m.log(s,ctx,"bulk_import","learners",created)
+    s.commit()
+    return {"created":created,"skipped":skipped,"submitted":len(data.rows)}
+
+class AcademicSettings(BaseModel):
+    academic_year:int=Field(ge=2020,le=2100)
+    term:int=Field(ge=1,le=4)
+    school_contact_email:str=Field(default="",max_length=200)
+
+@router.get("/settings/academic")
+def get_academic_settings(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    settings={x.key:x.value for x in s.scalars(select(m.SchoolSetting).where(
+        m.SchoolSetting.school_id==ctx["sid"],m.SchoolSetting.key.in_(("academic_year","term","school_contact_email")))).all()}
+    return {"academic_year":int(settings.get("academic_year",datetime.now(timezone.utc).year)),
+            "term":int(settings.get("term","1")),
+            "school_contact_email":settings.get("school_contact_email","")}
+
+@router.put("/settings/academic")
+def update_academic_settings(data:AcademicSettings,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    for key,value in data.model_dump().items():
+        setting=s.scalar(select(m.SchoolSetting).where(m.SchoolSetting.school_id==ctx["sid"],m.SchoolSetting.key==key))
+        if not setting:s.add(m.SchoolSetting(school_id=ctx["sid"],key=key,value=str(value)))
+        else:setting.value=str(value)
+    m.log(s,ctx,"update","academic_settings",ctx["sid"]);s.commit()
+    return {"ok":True}
