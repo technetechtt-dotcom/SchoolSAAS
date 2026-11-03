@@ -287,11 +287,36 @@ class Login(BaseModel):
     password: str
     school_slug: str
 class LearnerIn(BaseModel):
-    admission_no: str=Field(min_length=1,max_length=80)
+    admission_no: str=Field(default='', max_length=80)
     first_name: str=Field(min_length=1,max_length=120)
     surname: str=Field(min_length=1,max_length=120)
     grade: str=Field(min_length=1,max_length=25)
     class_name: str=Field(min_length=1,max_length=30)
+
+def next_admission_candidate(used: set[str]) -> str:
+    """Next school-scoped admission number from an in-memory used set (ADM-00001, ...)."""
+    max_n = 0
+    for adm in used:
+        if not adm:
+            continue
+        if adm.upper().startswith('ADM-'):
+            tail = adm.split('-', 1)[-1]
+            if tail.isdigit():
+                max_n = max(max_n, int(tail))
+        elif str(adm).isdigit():
+            max_n = max(max_n, int(adm))
+    max_n = max(max_n, len(used))
+    for _ in range(10000):
+        max_n += 1
+        candidate = f'ADM-{max_n:05d}'
+        if candidate not in used:
+            return candidate
+    raise HTTPException(500, 'Could not allocate admission number')
+
+def allocate_admission_no(s: Session, school_id: int) -> str:
+    """Allocate the next school-scoped admission number from persisted learner records."""
+    used = set(s.scalars(select(Learner.admission_no).where(Learner.school_id == school_id)).all())
+    return next_admission_candidate(used)
 class OffenceIn(BaseModel):
     code: str=Field(min_length=1,max_length=30)
     name: str=Field(min_length=1,max_length=160)
@@ -389,8 +414,16 @@ def learners(s:Session=Depends(db),ctx=Depends(current)):
     return [dict(id=x.id,admission_no=x.admission_no,name=x.first_name+' '+x.surname,grade=x.grade,class_name=x.class_name) for x in s.scalars(q.order_by(Learner.surname).limit(500)).all()]
 @app.post('/api/learners',status_code=201)
 def add_learner(data:LearnerIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
-    if s.scalar(select(Learner).where(Learner.school_id==ctx['sid'],Learner.admission_no==data.admission_no)): raise HTTPException(409,'Admission number exists')
-    item=Learner(school_id=ctx['sid'],**data.model_dump());s.add(item);s.flush();log(s,ctx,'create','learner',item.id);s.commit();return {'id':item.id}
+    payload=data.model_dump()
+    admission=(payload.get('admission_no') or '').strip()
+    if admission:
+        if s.scalar(select(Learner).where(Learner.school_id==ctx['sid'],Learner.admission_no==admission)):
+            raise HTTPException(409,'Admission number exists')
+    else:
+        admission=allocate_admission_no(s, ctx['sid'])
+    payload['admission_no']=admission
+    item=Learner(school_id=ctx['sid'],**payload);s.add(item);s.flush();log(s,ctx,'create','learner',item.id);s.commit()
+    return {'id':item.id,'admission_no':item.admission_no}
 @app.get('/api/offences')
 def offences(s:Session=Depends(db),ctx=Depends(current)):
     return [{'id':o.id,'code':o.code,'name':o.name,'category':o.category,'severity':o.severity} for o in s.scalars(select(Offence).where(Offence.school_id==ctx['sid']).order_by(Offence.code)).all()]

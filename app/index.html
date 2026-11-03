@@ -1,44 +1,107 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SchoolCare | School workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{font-family:Inter,system-ui,-apple-system,sans-serif;color:#172540;background:#f4f7fc;font-size:14px}
-*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}
-button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #f1b950;outline-offset:2px}
-header{position:sticky;top:0;z-index:3;background:#122849;color:white;display:flex;justify-content:space-between;align-items:center;padding:13px 24px;gap:16px}
-.brand{font-weight:800;font-size:21px;letter-spacing:-.6px}.brand span{color:#8fb8ff}#account{display:flex;align-items:center;gap:12px}
-#account small{color:#c3d2ed}.shell{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:calc(100vh - 62px)}
-aside{background:white;border-right:1px solid #dfe5ef;padding:18px 11px}nav{position:sticky;top:84px}
-.nav-group{font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:#7d899b;font-weight:800;margin:19px 12px 8px}
-.nav-btn{display:block;width:100%;text-align:left;background:transparent;border:0;padding:11px 13px;color:#334363;border-radius:9px;margin:2px 0}
-.nav-btn:hover{background:#f2f6ff}.nav-btn.active{background:#e8f0ff;color:#174cb3;font-weight:750}
-main{padding:28px;max-width:1420px;width:100%;margin:0 auto;min-width:0}h1{font-size:25px;margin:0}h2{font-size:19px;margin:0 0 13px}h3{font-size:15px;margin:0 0 9px}p{line-height:1.6}.subtle{color:#66758d}.subheading{margin:6px 0 22px}
-.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}.actions{display:flex;gap:8px;flex-wrap:wrap}
-button,.btn{border:0;background:#2460d5;color:white;border-radius:9px;padding:10px 14px;font-weight:650;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
-button:hover,.btn:hover{filter:brightness(.94)}button.secondary,.btn.secondary{background:#edf2fc;color:#164686}button.danger{background:#fff1f1;color:#a32e31}button.plain{background:transparent;color:#31548c}
-button:disabled{opacity:.5;cursor:not-allowed}.panel{background:#fff;border:1px solid #e2e8f2;border-radius:14px;padding:21px;box-shadow:0 2px 10px #1a3c6508;margin-bottom:16px}
-.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.metric{border:1px solid #e1e9f5;background:#fff;border-radius:12px;padding:20px}.metric strong{font-size:30px;display:block;margin-top:6px}.metric small{color:#64758e}
-.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.stack{display:grid;gap:12px}
-label{font-weight:650;display:block;margin-bottom:6px;color:#3a4960}input,select,textarea{width:100%;padding:11px 12px;border:1px solid #c7d3e4;border-radius:8px;background:white;min-height:42px}
-textarea{min-height:100px;resize:vertical}form{display:grid;gap:13px}.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:5px}
-.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:left;border-bottom:1px solid #e8edf5;white-space:normal}th{font-size:12px;color:#677892;background:#f8faff}tbody tr:hover{background:#f9fbff}
-.linkbtn{padding:0;background:none;color:#1d56b3;text-decoration:underline;font-weight:650}.pill{border-radius:99px;background:#e9f1ff;color:#204f9b;padding:5px 9px;display:inline-block;font-size:12px}
-.empty{padding:28px;text-align:center;color:#74819a;border:1px dashed #dce4ef;border-radius:10px}
-#toast{display:none;position:fixed;right:22px;bottom:22px;z-index:15;background:#153c6b;color:white;border-radius:10px;padding:15px 18px;max-width:min(420px,90vw);box-shadow:0 10px 35px #0b2d4f30}
-#dialog{display:none;position:fixed;inset:0;background:#14234199;z-index:10;align-items:center;justify-content:center;padding:18px}
-#dialog.open{display:flex}#dialog .modal{background:white;border-radius:15px;padding:25px;width:min(640px,100%);max-height:90vh;overflow-y:auto;box-shadow:0 15px 60px #0a214866}
-#login-screen{min-height:calc(100vh - 65px);display:grid;place-items:center;padding:26px}.auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px;width:min(890px,100%)}
-#menu-toggle{display:none}#login-screen .panel{margin:0}.result{font-size:12px;color:#66758d}.crumbs{margin-bottom:14px;color:#657792}
-.search-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.search-row input{max-width:320px}
-#app-shell[hidden],#login-screen[hidden]{display:none}
-@media(max-width:850px){#menu-toggle{display:inline-flex}.shell{grid-template-columns:1fr}aside{display:none;position:fixed;inset:62px auto 0 0;width:min(300px,85vw);z-index:5;box-shadow:20px 0 30px #1a274135;overflow-y:auto}aside.open{display:block}main{padding:18px}.cards{grid-template-columns:1fr 1fr}}
-@media(max-width:610px){.auth-grid,.grid2,.cards{grid-template-columns:1fr}header{padding:12px}#account small{display:none}main{padding:13px}.panel{padding:15px}h1{font-size:21px}.table-wrap{margin:0 -6px}th,td{padding:10px 7px}}
-@media(max-width:610px){header{height:66px;min-height:66px;gap:6px}#global-search{display:none}#account small{display:none}aside{top:66px!important}.brand{font-size:18px}#account button{padding:8px}}
+:root{
+  --font-ui:"Plus Jakarta Sans",Nunito,system-ui,sans-serif;
+  --font-brand:Nunito,"Plus Jakarta Sans",system-ui,sans-serif;
+  --ink:#16332c;--muted:#5d736b;--line:#d7ebe3;--line-soft:#e7f3ee;
+  --surface:#ffffff;--surface-soft:#f7fffb;
+  --primary:#0f9f8a;--primary-deep:#0b7f6e;--primary-soft:#d9f5ef;
+  --accent:#f4a261;--accent-soft:#fff1e4;--sky:#e8f6ff;--peach:#fff4ec;
+  --danger:#e35d5d;--danger-soft:#ffe8e8;
+  --header-h:64px;--space:16px;--space-sm:12px;--radius:16px;--card-pad:20px;
+  --shadow:0 8px 24px rgba(15,100,85,.07);--shadow-hover:0 14px 28px rgba(15,100,85,.12);
+  font-family:var(--font-ui);color:var(--ink);background:#eaf7f2;font-size:14.5px;
+}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{display:flex;flex-direction:column;overflow:hidden;background:
+  radial-gradient(1200px 500px at 12% -10%,#c7f0e4 0%,transparent 55%),
+  radial-gradient(900px 420px at 100% 0%,#ffe8c8 0%,transparent 50%),
+  linear-gradient(180deg,#eefaf6 0%,#f7fbf9 42%,#fff8f0 100%)}
+button,input,select,textarea{font:inherit}button{cursor:pointer}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+header{flex:0 0 var(--header-h);height:var(--header-h);z-index:3;color:white;display:flex;justify-content:space-between;align-items:center;padding:0 24px;gap:16px;
+  background:linear-gradient(120deg,#0d9488 0%,#0f9f8a 48%,#1aa6c1 100%);box-shadow:0 8px 24px rgba(13,148,136,.25)}
+.header-left,.header-tools{display:flex;align-items:center;gap:12px;min-width:0}
+.header-tools{gap:10px;flex:0 1 auto;justify-content:flex-end}
+.brand{font-family:var(--font-brand);font-weight:800;font-size:22px;letter-spacing:-.5px;line-height:1;white-space:nowrap}.brand span{color:#ffefc2}.brand small{font-size:11px;font-weight:600;color:rgba(255,255,255,.78);margin-left:6px;vertical-align:middle}
+#account{display:flex;align-items:center;gap:10px;height:38px}#account small{color:rgba(255,255,255,.9);font-size:12.5px;font-weight:600;line-height:1.2;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+#global-search{width:220px;max-width:min(220px,28vw);height:38px;min-height:38px;margin:0;padding:0 14px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:999px;box-shadow:none;line-height:38px}
+#global-search::placeholder{color:rgba(255,255,255,.72)}
+#global-search:focus{border-color:rgba(255,255,255,.55);box-shadow:0 0 0 3px rgba(255,255,255,.18);outline:none}
+header .secondary,header button.secondary,header #logout{height:38px;min-height:38px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.18);color:#fff;box-shadow:none;font-weight:700;line-height:1;transform:none}
+header .secondary:hover,header button.secondary:hover,header #logout:hover{background:rgba(255,255,255,.3);filter:none;transform:none;box-shadow:none}
+header #menu-toggle{width:38px;padding:0;flex:0 0 38px;justify-content:center}
+.shell{flex:1;min-height:0;display:grid;grid-template-columns:248px minmax(0,1fr);overflow:hidden}
+aside{background:linear-gradient(180deg,#f7fffc 0%,#ffffff 100%);border-right:1px solid var(--line);padding:18px 12px;overflow-x:hidden;overflow-y:auto;min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+nav{display:block}.nav-group{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:#7a948b;font-weight:800;margin:18px 12px 8px}
+.nav-group:first-child{margin-top:4px}
+.nav-btn,button.nav-btn{display:block;width:100%;text-align:left;background:transparent;border:0;padding:10px 13px;color:#2f4d44;border-radius:12px;margin:2px 0;min-height:0;font-weight:650;box-shadow:none;filter:none;transition:background .18s ease,color .18s ease,transform .18s ease}
+.nav-btn:hover,button.nav-btn:hover{background:#e7f8f2;transform:translateX(2px);box-shadow:none;filter:none}
+.nav-btn.active,button.nav-btn.active{background:linear-gradient(90deg,#d7f4ec,#e8faf5);color:var(--primary-deep);font-weight:750;box-shadow:inset 3px 0 0 var(--primary)}
+.nav-btn:active,button.nav-btn:active{transform:translateX(1px)}
+main{padding:24px 28px 36px;width:100%;margin:0;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+#page{display:flex;flex-direction:column;gap:var(--space);max-width:1360px;width:100%;margin:0 auto;animation:rise .38s ease both}
+#page > *{animation:rise .42s ease both}#page > *:nth-child(2){animation-delay:.04s}#page > *:nth-child(3){animation-delay:.08s}#page > *:nth-child(4){animation-delay:.12s}#page > *:nth-child(5){animation-delay:.16s}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+h1{font-family:var(--font-brand);font-size:28px;margin:0;line-height:1.2;letter-spacing:-.4px;color:#12362e}
+h2{font-size:18px;margin:0 0 var(--space-sm);line-height:1.3;color:#184338}h3{font-size:15px;margin:0 0 8px}
+p{line-height:1.55;margin:0 0 var(--space-sm)}.subtle{color:var(--muted)}.subheading{margin:6px 0 0;max-width:62ch}
+.toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space);flex-wrap:wrap;margin:0}.toolbar .actions{align-items:center;padding-top:2px}.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,.btn{border:0;background:linear-gradient(180deg,#14b8a0,#0f9f8a);color:white;border-radius:12px;padding:10px 16px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:42px;box-shadow:0 6px 14px rgba(15,159,138,.22);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
+button:hover,.btn:hover{filter:brightness(1.03);transform:translateY(-1px);box-shadow:0 10px 18px rgba(15,159,138,.28)}
+button:active,.btn:active{transform:translateY(0)}
+button.secondary,.btn.secondary{background:#e7f7f2;color:var(--primary-deep);box-shadow:none}button.secondary:hover,.btn.secondary:hover{background:#d8f1ea}
+button.danger{background:var(--danger-soft);color:#b42323;box-shadow:none}button.plain{background:transparent;color:var(--primary-deep);box-shadow:none}
+button:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+.panel{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius);padding:var(--card-pad);box-shadow:var(--shadow);margin:0;min-width:0;display:flex;flex-direction:column;gap:var(--space-sm);transition:transform .18s ease,box-shadow .18s ease}
+.panel:hover{box-shadow:var(--shadow-hover)}.panel > h2,.panel > p,.panel > ul{margin:0}.panel > :last-child{margin-bottom:0}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space);align-items:stretch;margin:0}
+.cards:has(.metric:only-child){grid-template-columns:minmax(0,360px)}
+.cards:has(.metric:nth-child(2):last-child){grid-template-columns:repeat(2,minmax(0,1fr))}
+.metric{border:1px solid transparent;border-radius:var(--radius);padding:18px var(--card-pad);min-width:0;min-height:112px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;box-shadow:var(--shadow);transition:transform .18s ease,box-shadow .18s ease}
+.metric:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover)}
+.metric:nth-child(3n+1){background:linear-gradient(160deg,#e6faf4,#ffffff 58%)}.metric:nth-child(3n+2){background:linear-gradient(160deg,#e8f5ff,#ffffff 58%)}.metric:nth-child(3n){background:linear-gradient(160deg,#fff1e3,#ffffff 58%)}
+.metric strong{font-family:var(--font-brand);font-size:30px;display:block;margin:0;line-height:1.1;letter-spacing:-.4px;word-break:break-word;color:#12362e}
+.metric small{color:#4f6b62;font-size:12px;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space);align-items:stretch;margin:0}.grid2 > .panel{height:100%}
+.stack{display:grid;gap:var(--space-sm)}.bar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0}.bar-track{height:10px;border-radius:20px;background:#e7f3ee;overflow:hidden}.bar-fill{background:linear-gradient(90deg,#14b8a0,#38bdf8);height:100%;border-radius:inherit;transition:width .4s ease}
+label{font-weight:700;display:block;margin-bottom:6px;color:#2f5248}input,select,textarea{width:100%;padding:11px 12px;border:1px solid #cfe4db;border-radius:12px;background:#fff;min-height:42px;transition:border-color .15s ease,box-shadow .15s ease}
+input:focus,select:focus,textarea:focus{border-color:#7dd3c3;box-shadow:0 0 0 4px rgba(15,159,138,.12)}
+textarea{min-height:100px;resize:vertical}form{display:grid;gap:var(--space-sm)}.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px;flex-wrap:wrap}
+.grid2 form,.panel form.grid2{align-items:end}.panel form.grid2 > div{min-width:0}.panel form.grid2 > button{width:100%}
+.table-wrap{overflow:auto;margin:0;border-radius:12px}table{width:100%;border-collapse:collapse}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:normal;vertical-align:middle}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}
+th{font-size:12px;color:#5f7a71;background:#f3faf7;font-weight:700}tbody tr{transition:background .15s ease}tbody tr:hover{background:#f5fcf9}tbody tr:last-child td{border-bottom:0}
+.linkbtn{padding:0;background:none;color:var(--primary-deep);text-decoration:underline;font-weight:700;min-height:auto;box-shadow:none}button.linkbtn:hover{transform:none;filter:none}
+.pill{border-radius:999px;background:var(--primary-soft);color:var(--primary-deep);padding:5px 10px;display:inline-block;font-size:12px;line-height:1.2;font-weight:700}
+.empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed #bfe3d7;border-radius:14px;margin:0;background:linear-gradient(180deg,#f7fffb,#ffffff)}
+.chip-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0}.chip-row .secondary{border-radius:999px}.pagination-bar{margin:4px 0 0;padding-top:var(--space-sm);border-top:1px solid var(--line-soft);align-items:center}
+.notice{background:linear-gradient(135deg,var(--sky),var(--primary-soft));border-radius:14px;padding:12px 14px;margin:0;color:#35584e;line-height:1.5;border:1px solid #cfece3}
+.auth-links{display:grid;gap:8px;margin:0}.auth-links button{width:100%}
+#toast{display:none;position:fixed;right:22px;bottom:22px;z-index:15;background:linear-gradient(120deg,#0f766e,#0e7490);color:white;border-radius:14px;padding:15px 18px;max-width:min(420px,90vw);box-shadow:0 14px 36px rgba(15,100,85,.28)}
+#dialog{display:none;position:fixed;inset:0;background:#12362e88;z-index:10;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(2px)}
+#dialog.open{display:flex}#dialog .modal{background:white;border-radius:18px;padding:22px;width:min(640px,100%);max-height:90vh;overflow-y:auto;box-shadow:0 22px 60px rgba(18,54,46,.28);display:flex;flex-direction:column;gap:var(--space-sm);animation:rise .25s ease}
+#dialog .modal > .toolbar{align-items:center;margin:0}#modal-body{display:flex;flex-direction:column;gap:var(--space-sm)}#modal-body > .panel{box-shadow:none;border-color:var(--line-soft)}
+#login-screen{flex:1;min-height:0;overflow:auto;display:grid;place-items:center;padding:28px;position:relative}
+#login-screen::before{content:"";position:absolute;inset:8% 10% auto auto;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,#ffd59a88,#ffd59a00 70%);pointer-events:none}
+#login-screen::after{content:"";position:absolute;inset:auto auto 12% 8%;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,#8fe0cf66,#8fe0cf00 70%);pointer-events:none}
+.auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;width:min(920px,100%);align-items:stretch;position:relative;z-index:1}
+#menu-toggle{display:none}#login-screen .panel{margin:0;height:100%;background:rgba(255,255,255,.92);backdrop-filter:blur(8px)}
+.result{font-size:12px;color:var(--muted);white-space:nowrap}.crumbs{margin:0;color:var(--muted)}.crumbs a,.crumbs .linkbtn{color:var(--primary-deep)}
+.search-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0}.search-row input{max-width:320px;flex:1 1 220px}.search-row select{max-width:190px;flex:0 1 190px}
+#app-shell[hidden],#login-screen[hidden]{display:none!important}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media(max-width:850px){#menu-toggle{display:inline-flex}.shell{grid-template-columns:1fr}aside{display:none;position:fixed;top:var(--header-h);left:0;bottom:0;width:min(300px,85vw);z-index:5;box-shadow:20px 0 30px rgba(18,54,46,.16);overflow-y:auto;overscroll-behavior:contain}aside.open{display:block}main{padding:18px 16px 24px}.grid2{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.cards:has(.metric:only-child){grid-template-columns:1fr}}
+@media(max-width:610px){.auth-grid{grid-template-columns:1fr}.cards,.cards:has(.metric:nth-child(2):last-child),.cards:has(.metric:only-child){grid-template-columns:1fr}header{padding:0 12px}#account small{display:none}main{padding:14px 12px 20px}.panel,.metric{padding:16px}h1{font-size:23px}th,td{padding:10px 8px}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}.result{white-space:normal}}
+@media(max-width:610px){:root{--header-h:66px;--card-pad:16px}#global-search{display:none}#account small{display:none}.brand{font-size:18px}.header-tools{gap:8px}header #logout,header .secondary{padding:0 12px;height:36px;min-height:36px}#account{height:36px}}
 </style></head><body>
-<header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div class="actions"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." style="max-width:210px;min-height:35px" hidden><div id="account"></div></div></header>
+<header><div class="header-left"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span><small>/ for schools</small></div></div><div class="header-tools"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." hidden><div id="account"></div></div></header>
 <section id="login-screen"><div class="auth-grid">
-<div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><p class="subtle" style="background:#eef5ff;border-radius:10px;padding:12px;margin:0 0 14px">Local demo login tip<br>School identifier: <strong>demo</strong><br>Email: <strong>admin@demo.local</strong><br>Use the password configured in your local environment.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="demo"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required placeholder="admin@demo.local"></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button></p><p><button type="button" class="secondary" data-action="request-reset">Forgot password?</button></p></div>
-<div class="panel"><h2>Register a school</h2><p class="subtle">Create an isolated demonstration workspace. Use fictional learner records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" required minlength="3" maxlength="40" title="3–40 lowercase letters, numbers, or hyphens" placeholder="example-school" autocomplete="off"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
+<div class="panel"><h2>Welcome back</h2><p class="subtle">Sign in to your school's caring workspace.</p><p class="notice">Local demo login tip<br>School identifier: <strong>demo</strong><br>Email: <strong>admin@demo.local</strong><br>Use the password configured in your local environment.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="demo"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required placeholder="admin@demo.local"></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><div class="auth-links"><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button><button type="button" class="secondary" data-action="request-reset">Forgot password?</button></div></div>
+<div class="panel"><h2>Start a school workspace</h2><p class="subtle">Create a fresh space for learner support — fictional demo records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" required minlength="3" maxlength="40" title="3–40 lowercase letters, numbers, or hyphens" placeholder="example-school" autocomplete="off"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
 </div></section>
 <div id="app-shell" class="shell" hidden><aside id="sidebar"><nav id="nav" aria-label="Main navigation"></nav></aside><main id="main" tabindex="-1"><div id="page"></div></main></div>
 <div id="toast" role="status" aria-live="polite"></div><div id="dialog" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="toolbar"><h2 id="modal-title">Details</h2><button class="secondary" id="close-dialog" aria-label="Close dialog">Close</button></div><div id="modal-body"></div></section></div>
@@ -68,7 +131,7 @@ const btn=(name,action,id="",secondary=true)=>'<button type="button" class="'+(s
 const head=(title,desc,buttons="")=>'<div class="toolbar"><div><h1>'+esc(title)+'</h1><p class="subheading subtle">'+esc(desc)+'</p></div><div class="actions">'+buttons+'</div></div>';
 const panel=(body,title="")=>'<div class="panel">'+(title?'<h2>'+esc(title)+'</h2>':"")+body+'</div>';
 const table=(cols,rows)=>rows.length?'<div class="table-wrap"><table><thead><tr>'+cols.map(x=>'<th>'+esc(x)+'</th>').join("")+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(cell=>'<td>'+cell+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty">No records found. Add a record or change the search.</div>';
-const bars=obj=>{const entries=Object.entries(obj);if(!entries.length)return '<div class="empty">No data yet</div>';const max=Math.max(1,...entries.map(x=>Number(x[1])));return '<div class="stack">'+entries.map(x=>'<div><div class="toolbar" style="margin-bottom:4px"><span>'+esc(x[0])+'</span><strong>'+esc(x[1])+'</strong></div><div style="height:10px;border-radius:20px;background:#edf2fc;overflow:hidden"><div style="background:#3b72dc;height:100%;width:'+Math.round(Number(x[1])/max*100)+'%"></div></div></div>').join("")+'</div>'};
+const bars=obj=>{const entries=Object.entries(obj);if(!entries.length)return '<div class="empty">No data yet</div>';const max=Math.max(1,...entries.map(x=>Number(x[1])));return '<div class="stack">'+entries.map(x=>'<div class="stack" style="gap:6px"><div class="bar-row"><span>'+esc(x[0])+'</span><strong>'+esc(x[1])+'</strong></div><div class="bar-track"><div class="bar-fill" style="width:'+Math.round(Number(x[1])/max*100)+'%"></div></div></div>').join("")+'</div>'};
 const plain=x=>esc(x), pill=x=>'<span class="pill">'+esc(x)+'</span>';
 const link=(text,page,id)=>'<button class="linkbtn" type="button" data-go="'+esc(page)+(id?"/"+esc(id):"")+'">'+esc(text)+'</button>';
 const jsonForm=(id,body,label="Save")=>'<form data-form="'+esc(id)+'">'+body+'<div class="form-actions"><button type="button" class="secondary" data-action="close">Cancel</button><button type="submit">'+esc(label)+'</button></div></form>';
@@ -100,12 +163,12 @@ const schoolLearners=async()=>api("learners");
 const learnerPicker=async()=>{const d=await api("directory/learners?limit=50");return '<div><label for="learner-search-field">Search learner by name or admission number</label><input id="learner-search-field" type="search" placeholder="Start typing a learner name" autocomplete="off"></div>'+options("learner_id","Select learner",d.items.map(x=>[x.id,x.name+" · "+x.class_name]));};
 function bindLearnerPicker(){const input=$("modal-body").querySelector("#learner-search-field"),select=$("modal-body").querySelector('[name="learner_id"]');if(!input||!select)return;let counter=0;input.addEventListener("input",async()=>{const seq=++counter;const q=input.value;try{const d=await api("directory/learners?limit=50&q="+encodeURIComponent(q));if(seq!==counter)return;select.innerHTML=d.items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name+" · "+x.class_name)+'</option>').join("");select.disabled=d.items.length===0;select.dispatchEvent(new Event("change"))}catch(e){toast(e.message,true)}})}
 
-let directoryState={q:"",offset:0,total:0};
+let directoryState={q:"",grade:"",offset:0,total:0};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
- if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Educator workspace","Record behaviour concerns and review your own reports",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
+ if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
  const [d,n,stats]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview")]);
- $("page").innerHTML=head(d.school+" overview","Your school's learner support and discipline summary",btn("Report incident","create-incident","",false))+
+ $("page").innerHTML=head("Good day, "+d.school,"A clear view of learner support — celebrate progress and act where it helps",btn("Report incident","create-incident","",false))+
  '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Incident locations")+
  panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>'+
@@ -114,16 +177,24 @@ async function dashboard(){
 }
 async function learnerDirectory(){
  const state=directoryState;
- const response=await api("directory/learners?limit=50&offset="+state.offset+"&q="+encodeURIComponent(state.q));
+ const response=await api("directory/learners?limit=50&offset="+state.offset+"&q="+encodeURIComponent(state.q)+"&grade="+encodeURIComponent(state.grade||""));
  state.total=response.total;
- $("page").innerHTML=head("Learners","Search and manage learner records across all grades",user.role==="educator"?"":btn("Add learner","create-learner","",false)+(admin()?btn("Import CSV","import-learners"):""))+
- panel('<div class="search-row"><input id="directory-query" type="search" placeholder="Name, admission number or class" aria-label="Search learners" value="'+esc(state.q)+'"><span class="result">'+esc(state.total)+' learner records</span></div><div id="learner-records">'+
- table(["Learner","Admission","Grade","Class"],response.items.map(x=>[link(x.name,"learners",x.id),plain(x.admission_no),plain(x.grade),plain(x.class_name)]))+'</div>'+
- '<div class="toolbar" style="margin-top:14px"><span class="subtle">Showing '+(response.total?state.offset+1:0)+'–'+Math.min(state.offset+50,state.total)+' of '+state.total+'</span><div class="actions">'+
+ const gradeOptions=['<option value="">All grades</option>'].concat((response.grades||[]).map(g=>'<option value="'+esc(g.grade)+'" '+(String(state.grade)===String(g.grade)?"selected":"")+'>Grade '+esc(g.grade)+' ('+esc(g.learners)+')</option>')).join("");
+ const chips=(response.grades||[]).map(g=>'<button type="button" class="secondary" data-grade-filter="'+esc(g.grade)+'"'+(String(state.grade)===String(g.grade)?' style="background:#d7e6ff"':'')+'>Grade '+esc(g.grade)+'</button>').join(" ");
+ $("page").innerHTML=head(state.grade?"Learners · Grade "+state.grade:"Learners","Find every learner quickly — by grade, name, admission or class",user.role==="educator"?"":btn("Add learner","create-learner","",false)+(admin()?btn("Import CSV","import-learners"):""))+
+ panel('<div class="search-row"><input id="directory-query" type="search" placeholder="Name, admission number, grade or class" aria-label="Search learners" value="'+esc(state.q)+'">'+
+ '<select id="grade-filter" aria-label="Filter by grade">'+gradeOptions+'</select>'+
+ '<span class="result">'+esc(state.total)+(state.grade?" in grade "+esc(state.grade):"")+' learner records</span></div>'+
+ (chips?'<div class="chip-row">'+chips+' <button type="button" class="secondary" data-grade-filter="">All grades</button></div>':'')+
+ '<div id="learner-records">'+
+ table(["Learner","Admission","Grade","Class"],response.items.map(x=>[link(x.name,"learners",x.id),plain(x.admission_no),'<button type="button" class="linkbtn" data-grade-filter="'+esc(x.grade)+'">Grade '+esc(x.grade)+'</button>',plain(x.class_name)]))+'</div>'+
+ '<div class="toolbar pagination-bar"><span class="subtle">Showing '+(response.total?state.offset+1:0)+'–'+Math.min(state.offset+50,state.total)+' of '+state.total+'</span><div class="actions">'+
  '<button type="button" class="secondary" id="prev-page" '+(state.offset===0?"disabled":"")+'>Previous</button>'+
  '<button type="button" class="secondary" id="next-page" '+(state.offset+50>=state.total?"disabled":"")+'>Next</button></div></div>');
  let searchTimer;
  $("directory-query").addEventListener("input",e=>{clearTimeout(searchTimer);const val=e.target.value;searchTimer=setTimeout(()=>{state.q=val;state.offset=0;learnerDirectory()},300)});
+ $("grade-filter").onchange=e=>{state.grade=e.target.value;state.offset=0;learnerDirectory()};
+ $("page").querySelectorAll("[data-grade-filter]").forEach(b=>b.onclick=()=>{state.grade=b.getAttribute("data-grade-filter")||"";state.offset=0;learnerDirectory()});
  $("prev-page").onclick=()=>{state.offset=Math.max(0,state.offset-50);learnerDirectory()};
  $("next-page").onclick=()=>{state.offset+=50;learnerDirectory()};
 }
@@ -136,7 +207,7 @@ async function paginatedRegister(key){
  [link("#"+x.id,"cases",x.id),link("#"+x.learner_id,"learners",x.learner_id),plain(x.title),pill(x.status)]);
  $("page").innerHTML=head(key==="cases"?"Cases":"Incidents","School records with server-side pagination",btn(key==="cases"?"New case":"Report incident",key==="cases"?"create-case":"create-incident","",false))+
  panel(table(key==="cases"?["Case","Learner","Title","Status"]:["Incident","Learner","Status","Created"],rows)+
- '<div class="toolbar" style="margin-top:16px"><span>'+esc(result.total)+' total • '+esc(offset+1)+'–'+esc(Math.min(offset+50,result.total))+'</span><div class="actions">'+
+ '<div class="toolbar pagination-bar"><span class="subtle">'+esc(result.total)+' total • '+esc(offset+1)+'–'+esc(Math.min(offset+50,result.total))+'</span><div class="actions">'+
  '<button class="secondary" id="page-previous" '+(offset===0?"disabled":"")+'>Previous</button>'+
  '<button class="secondary" id="page-next" '+(offset+50>=result.total?"disabled":"")+'>Next</button></div></div>');
  $("page-previous").onclick=()=>{paging[key]=Math.max(0,offset-50);paginatedRegister(key)};
@@ -190,10 +261,11 @@ async function listPage(key){
  case "appeals":return [link("#"+x.case_id,"cases",x.case_id),plain(x.reason.slice(0,85)),btn(x.status,"edit-appeal",x.id)];
  case "appointments":return [link("#"+x.learner_id,"learners",x.learner_id),plain(x.title),plain(x.scheduled_at.slice(0,16)),btn(x.status,"edit-appointment",x.id)];
  case "documents":return [link("#"+x.learner_id,"learners",x.learner_id),btn(x.title,"view-document",x.id),plain(x.document_type),plain(x.created_at.slice(0,10))];
- case "classes":return [plain(x.grade),plain(x.class_name),plain(x.learners)];
+ case "classes":return ['<button type="button" class="linkbtn" data-open-grade="'+esc(x.grade)+'">Grade '+esc(x.grade)+'</button>',plain(x.class_name),plain(x.learners)];
  case "audit":return [plain(x.action),plain(x.subject+" #"+x.subject_id),plain(x.at.slice(0,19))];
  }});return table(c[4],rows)}
  bindSearch(data,c[3],draw);
+ if(key==="classes")$("list-table").addEventListener("click",e=>{const b=e.target.closest("[data-open-grade]");if(!b)return;directoryState.grade=b.getAttribute("data-open-grade")||"";directoryState.q="";directoryState.offset=0;navigate("learners")});
 }
 async function details(key,id){
  const d=await api(key+"/"+id);
@@ -335,8 +407,8 @@ async function openAction(action,id){
  case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
  case "update-followup":name="Update follow-up";kind="followup-update:"+id;body=options("status","Status",["open","in_progress","completed","cancelled"].map(x=>[x,x]));break;
  case "assign-class":name="Assign class";kind="class-assignments";body=options("user_id","Staff",(await api("members")).filter(x=>x.active).map(x=>[x.user_id,x.email]))+input("class_name","Class","text","","required");break;
- case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. File must contain headers: admission_no, first_name, surname, grade, class_name. Duplicates are skipped; maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
- case "create-learner":name="New learner";kind="learners";body=input("admission_no","Admission number","text","","required")+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required")+input("class_name","Class","text","","required");break;
+ case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. Required headers: first_name, surname, grade, class_name. Optional: admission_no (auto-generated when blank). Maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
+ case "create-learner":name="New learner";kind="learners";body="<p class=\"subtle\">Admission number is assigned automatically (ADM-00001 format).</p>"+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required placeholder=\"e.g. 7\"")+input("class_name","Class","text","","required placeholder=\"e.g. 7A\"");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]]);break;
  case "edit-offence":data=(await api("offences")).find(x=>String(x.id)===String(id));if(!data)throw Error("Offence not found");name="Edit unused offence";kind="offence-update:"+id;body="<p class=\"subtle\">Offences already used in incidents cannot be edited. Create a new offence code for revised policies.</p>"+input("name","Name","text",data.name,"required")+input("category","Category","text",data.category,"required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]],data.severity);break;
@@ -436,10 +508,11 @@ async function submitForm(f){
    }
    cells.push(value);if(cells.some(x=>x.trim()))parsed.push(cells);
    const header=parsed.shift()?.map(x=>x.trim().toLowerCase());
-   const expected=["admission_no","first_name","surname","grade","class_name"];
-   if(!header||!expected.every(x=>header.includes(x))){toast("CSV must include admission_no, first_name, surname, grade and class_name",true);return}
+   const required=["first_name","surname","grade","class_name"];
+   if(!header||!required.every(x=>header.includes(x))){toast("CSV must include first_name, surname, grade and class_name (admission_no optional)",true);return}
    if(parsed.length>1000){toast("Maximum 1,000 learner rows per file",true);return}
-   const rows=parsed.map(parts=>Object.fromEntries(expected.map(x=>[x,(parts[header.indexOf(x)]||"").trim()])));
+   const cols=["admission_no","first_name","surname","grade","class_name"];
+   const rows=parsed.map(parts=>Object.fromEntries(cols.map(x=>[x,header.includes(x)?(parts[header.indexOf(x)]||"").trim():""])));
    data={rows};url="learners/import";go="learners";
  }
  if(k==="cases"){data.incident_ids=Array.from(f.querySelectorAll("[name=linked_incident]:checked")).map(x=>Number(x.value));if(!data.incident_ids.length){toast("Select at least one incident",true);return}go="cases"}
@@ -456,6 +529,7 @@ async function submitForm(f){
  if(k==="account-recovery/request"){toast(result.message||"Check your email for recovery instructions.");return}
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){if(result.emailed){toast(result.notice||"Invitation emailed");navigate("staff");return}modal("Invitation generated",panel('<p>'+esc(result.notice||"Share this token privately.")+'</p><textarea readonly aria-label="Invitation token">'+esc(result.token||"")+'</textarea>'));return}
+ if(k==="learners"&&result.admission_no){toast("Learner saved · admission "+result.admission_no);unsaved=false;navigate(go);return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
 }

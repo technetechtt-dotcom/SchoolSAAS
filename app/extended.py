@@ -233,21 +233,34 @@ class SchoolSwitch(BaseModel):
     school_id:int
 
 @router.get("/directory/learners")
-def learner_directory(q:str="",limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0),
+def learner_directory(q:str="",grade:str="",limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0),
                       s:Session=Depends(m.db),ctx=Depends(m.current)):
     query=select(m.Learner).where(m.Learner.school_id==ctx["sid"])
     if ctx["role"]=="educator":
-        if not ctx["assigned_classes"]:return {"items":[],"total":0,"limit":limit,"offset":offset}
+        if not ctx["assigned_classes"]:return {"items":[],"total":0,"limit":limit,"offset":offset,"grade":grade,"grades":[]}
         query=query.where(m.Learner.class_name.in_(ctx["assigned_classes"]))
+    grade_filter=(grade or "").strip()
+    if grade_filter:
+        # Accept "7", "Grade 7", "grade 7"
+        normalized=grade_filter.lower().replace("grade","").strip()
+        query=query.where(or_(m.Learner.grade==normalized,m.Learner.grade==grade_filter,
+                              m.Learner.grade.ilike("grade "+normalized),m.Learner.grade.ilike(normalized)))
     if q.strip():
         term="%"+q.strip().replace("%",r"\%").replace("_",r"\_")+"%"
         query=query.where(or_(m.Learner.first_name.ilike(term),m.Learner.surname.ilike(term),
-            m.Learner.admission_no.ilike(term),m.Learner.class_name.ilike(term)))
+            m.Learner.admission_no.ilike(term),m.Learner.class_name.ilike(term),m.Learner.grade.ilike(term)))
     total=s.scalar(select(func.count()).select_from(query.subquery()))
-    rows=s.scalars(query.order_by(m.Learner.surname,m.Learner.id).offset(offset).limit(limit)).all()
+    rows=s.scalars(query.order_by(m.Learner.grade,m.Learner.surname,m.Learner.id).offset(offset).limit(limit)).all()
+    grade_rows=s.execute(select(m.Learner.grade,func.count()).where(m.Learner.school_id==ctx["sid"],m.Learner.active==True)
+                         .group_by(m.Learner.grade).order_by(m.Learner.grade)).all()
+    if ctx["role"]=="educator" and ctx["assigned_classes"]:
+        grade_rows=s.execute(select(m.Learner.grade,func.count()).where(
+            m.Learner.school_id==ctx["sid"],m.Learner.active==True,
+            m.Learner.class_name.in_(ctx["assigned_classes"])).group_by(m.Learner.grade).order_by(m.Learner.grade)).all()
     return {"items":[{"id":x.id,"name":x.first_name+" "+x.surname,"admission_no":x.admission_no,
             "grade":x.grade,"class_name":x.class_name} for x in rows],
-            "total":total,"limit":limit,"offset":offset}
+            "total":total,"limit":limit,"offset":offset,"grade":grade_filter,
+            "grades":[{"grade":g,"learners":n} for g,n in grade_rows]}
 
 @router.get("/mine/schools")
 def my_schools(s:Session=Depends(m.db),ctx=Depends(m.current)):
@@ -290,7 +303,7 @@ def analytics(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
 
 
 class BulkLearnerRow(BaseModel):
-    admission_no:str=Field(min_length=1,max_length=80)
+    admission_no:str=Field(default="",max_length=80)
     first_name:str=Field(min_length=1,max_length=120)
     surname:str=Field(min_length=1,max_length=120)
     grade:str=Field(min_length=1,max_length=25)
@@ -302,20 +315,23 @@ class BulkLearnerIn(BaseModel):
 @router.post("/learners/import",status_code=201)
 def bulk_import_learners(data:BulkLearnerIn,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
     existing=set(s.scalars(select(m.Learner.admission_no).where(m.Learner.school_id==ctx["sid"])).all())
-    created=0;skipped=[]
+    created=0;skipped=[];assigned=[]
     for idx,row in enumerate(data.rows,1):
-        admission=row.admission_no.strip()
-        if admission in existing:
-            skipped.append({"row":idx,"admission_no":admission,"reason":"Duplicate admission number"})
-            continue
+        admission=(row.admission_no or "").strip()
+        if admission:
+            if admission in existing:
+                skipped.append({"row":idx,"admission_no":admission,"reason":"Duplicate admission number"})
+                continue
+        else:
+            admission=m.next_admission_candidate(existing)
         existing.add(admission)
         s.add(m.Learner(school_id=ctx["sid"],admission_no=admission,
             first_name=row.first_name.strip(),surname=row.surname.strip(),
             grade=row.grade.strip(),class_name=row.class_name.strip()))
-        created+=1
+        assigned.append(admission);created+=1
     m.log(s,ctx,"bulk_import","learners",created)
     s.commit()
-    return {"created":created,"skipped":skipped,"submitted":len(data.rows)}
+    return {"created":created,"skipped":skipped,"submitted":len(data.rows),"admission_numbers":assigned}
 
 class AcademicSettings(BaseModel):
     academic_year:int=Field(ge=2020,le=2100)

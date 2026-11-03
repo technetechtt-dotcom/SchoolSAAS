@@ -22,7 +22,6 @@ with sync_playwright() as playwright:
     page.locator('[data-go="learners"]').click()
     page.get_by_role("heading",name="Learners").wait_for()
     page.get_by_role("button",name="Add learner").click()
-    page.locator('#dialog input[name="admission_no"]').fill("TEST-001")
     page.locator('#dialog input[name="first_name"]').fill("Demo")
     page.locator('#dialog input[name="surname"]').fill("Student")
     page.locator('#dialog input[name="grade"]').fill("5")
