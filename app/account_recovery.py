@@ -35,7 +35,7 @@ def send_email(destination,token):
     msg.set_content("A password reset was requested for this SchoolCare account. "
                     "If this was not you, ignore this message.\n\n"
                     "Reset URL (expires in 20 minutes): "+
-                    os.environ["APP_PUBLIC_URL"].rstrip("/")+"/?reset="+token+"\n")
+                    os.environ["APP_PUBLIC_URL"].rstrip("/")+"/#reset="+token+"\n")
     context=ssl.create_default_context()
     with smtplib.SMTP_SSL(os.environ["SMTP_HOST"],int(os.getenv("SMTP_PORT","465")),timeout=10,context=context) as smtp:
         smtp.login(os.environ["SMTP_USERNAME"],os.environ["SMTP_PASSWORD"])
