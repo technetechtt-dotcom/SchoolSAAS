@@ -15,6 +15,15 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Compile Python
         run: python -m compileall -q app
+      - name: Check frontend JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html=Path("app/index.html").read_text()
+          js=html.rsplit("<script>",1)[1].split("</script>",1)[0]
+          Path("/tmp/schoolcare-ui.js").write_text(js)
+          PY
+          node --check /tmp/schoolcare-ui.js
       - name: Run tests
         env:
           JWT_SECRET: ci-only-test-key-do-not-use-in-production
