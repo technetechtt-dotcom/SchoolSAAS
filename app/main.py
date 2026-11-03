@@ -276,10 +276,12 @@ def register(data:Register, response:Response, s:Session=Depends(db)):
     return {'school_id':school.id,'school':school.name,'role':'school_admin'}
 @app.post('/api/login')
 def login(data:Login,response:Response,s:Session=Depends(db)):
-    identity = login_identity(data.school_slug, data.email)
+    slug = (data.school_slug or '').strip().lower()
+    email = (data.email or '').strip().lower()
+    identity = login_identity(slug, email)
     check_login_limit(s, identity)
-    school=s.scalar(select(School).where(School.slug==data.school_slug))
-    user=s.scalar(select(User).where(User.email==data.email.lower()))
+    school=s.scalar(select(School).where(School.slug==slug))
+    user=s.scalar(select(User).where(User.email==email))
     if not user or not school:
         failed_login(s, identity)
         raise HTTPException(401,'Invalid credentials')
@@ -302,7 +304,28 @@ def logout(response:Response,request:Request,s:Session=Depends(db)):
     response.delete_cookie('session')
     return {'ok':True}
 @app.get('/api/me')
-def me(ctx=Depends(current)): return ctx
+def me(request: Request, session: Session = Depends(db)):
+    """UI session probe: return 200 + authenticated=false when signed out (avoids console 401 noise)."""
+    token = request.cookies.get('session')
+    if not token:
+        return {'authenticated': False}
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        uid = int(payload['sub']); sid = int(payload['school_id']); nonce = payload['jti']
+    except (jwt.InvalidTokenError, ValueError, KeyError):
+        return {'authenticated': False}
+    record = session.scalar(select(ActiveSession).where(
+        ActiveSession.token_hash == hashlib.sha256(nonce.encode()).hexdigest(),
+        ActiveSession.user_id == uid, ActiveSession.school_id == sid))
+    if not record or record.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+        return {'authenticated': False}
+    membership = session.scalar(select(Membership).where(Membership.user_id == uid, Membership.school_id == sid))
+    school = session.get(School, sid)
+    user = session.get(User, uid)
+    if not membership or not membership.active or not user or not user.active or not school or school.status != 'active':
+        return {'authenticated': False}
+    return {'authenticated': True, 'uid': uid, 'sid': sid, 'role': membership.role,
+            'school': school.name, 'assigned_class': membership.assigned_class}
 @app.get('/api/learners')
 def learners(s:Session=Depends(db),ctx=Depends(current)):
     q=select(Learner).where(Learner.school_id==ctx['sid'])

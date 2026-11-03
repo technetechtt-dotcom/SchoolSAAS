@@ -50,12 +50,13 @@ def test_sessions_case_assignees_and_csv_formula_safety():
         assert hod.get("/api/me").json()["sid"]==2
         old_school=TestClient(main.app)
         old_school.cookies.set("session",before_switch)
-        assert old_school.get("/api/me").status_code==401
+        assert old_school.get("/api/me").json()["authenticated"] is False
         assert admin.get("/api/me").status_code==200
+        assert admin.get("/api/me").json()["authenticated"] is True
         assert send(admin,"/api/logout",{}).status_code==200
         old=TestClient(main.app)
         old.cookies.set("session",token)
-        assert old.get("/api/me").status_code==401
+        assert old.get("/api/me").json()["authenticated"] is False
         for _ in range(5):
             assert send(admin,"/api/login",{"school_slug":"security-school","email":"admin@school.test","password":"wrong"}).status_code==401
         locked=send(admin,"/api/login",{"school_slug":"security-school","email":"admin@school.test","password":"demo-password-123456"})
