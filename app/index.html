@@ -49,15 +49,15 @@ const csrf=()=>decodeURIComponent(document.cookie.split("; ").find(x=>x.startsWi
 let user=null, unsaved=false, records={};
 const groups=[
  ["WORKSPACE",[["dashboard","Overview"],["notifications","Notifications"],["tasks","Review tasks"]]],
- ["LEARNERS",[["learners","Learners"],["classes","Grades & classes"]]],
+ ["LEARNERS",[["learners","Learners"],["classes","Grades & classes"],["class-assignments","Class assignments"]]],
  ["BEHAVIOUR",[["incidents","Incidents"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"]]],
- ["COMMUNICATION",[["contacts","Parent contacts"],["appointments","Meetings"],["documents","Document drafts"]]],
+ ["COMMUNICATION",[["contacts","Parent contacts"],["guardians","Guardians"],["appointments","Meetings"],["documents","Document drafts"]]],
  ["ANALYTICS",[["reports","Reports"]]],
  ["ADMINISTRATION",[["offences","Offences"],["staff","Staff & access"],["settings","Settings"],["subscription","Subscription"],["audit","Audit log"]]]
 ];
 const manager=()=>user&&["school_admin","principal","smt","hod"].includes(user.role);
 const admin=()=>user&&["school_admin","principal"].includes(user.role);
-const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes"].includes(key)||manager();
+const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments"].includes(key)||manager();
 const can=key=>allowed(key)&&(!["staff","settings","subscription","audit"].includes(key)||admin());
 const input=(name,label,type="text",value="",extra="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><input id="field-'+esc(name)+'" name="'+esc(name)+'" type="'+esc(type)+'" value="'+esc(value)+'" '+extra+'></div>';
 const area=(name,label,value="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><textarea id="field-'+esc(name)+'" name="'+esc(name)+'">'+esc(value)+'</textarea></div>';
@@ -103,7 +103,7 @@ let directoryState={q:"",offset:0,total:0};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Educator workspace","Record behaviour concerns and review your own reports",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
- const [d,n,stats]=await Promise.all([api("dashboard"),api("notifications"),api("analytics/overview")]);
+ const [d,n,stats]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview")]);
  $("page").innerHTML=head(d.school+" overview","Your school's learner support and discipline summary",btn("Report incident","create-incident","",false))+
  '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Incident locations")+
@@ -126,6 +126,34 @@ async function learnerDirectory(){
  $("prev-page").onclick=()=>{state.offset=Math.max(0,state.offset-50);learnerDirectory()};
  $("next-page").onclick=()=>{state.offset+=50;learnerDirectory()};
 }
+
+let paging={incidents:0,cases:0};
+async function paginatedRegister(key){
+ const offset=paging[key], result=await api("directory/"+key+"?limit=50&offset="+offset);
+ const rows=result.items.map(x=>key==="incidents"?
+ [link("#"+x.id,"incidents",x.id),link("#"+x.learner_id,"learners",x.learner_id),pill(x.status),plain(x.created_at.slice(0,10))]:
+ [link("#"+x.id,"cases",x.id),link("#"+x.learner_id,"learners",x.learner_id),plain(x.title),pill(x.status)]);
+ $("page").innerHTML=head(key==="cases"?"Cases":"Incidents","School records with server-side pagination",btn(key==="cases"?"New case":"Report incident",key==="cases"?"create-case":"create-incident","",false))+
+ panel(table(key==="cases"?["Case","Learner","Title","Status"]:["Incident","Learner","Status","Created"],rows)+
+ '<div class="toolbar" style="margin-top:16px"><span>'+esc(result.total)+' total • '+esc(offset+1)+'–'+esc(Math.min(offset+50,result.total))+'</span><div class="actions">'+
+ '<button class="secondary" id="page-previous" '+(offset===0?"disabled":"")+'>Previous</button>'+
+ '<button class="secondary" id="page-next" '+(offset+50>=result.total?"disabled":"")+'>Next</button></div></div>');
+ $("page-previous").onclick=()=>{paging[key]=Math.max(0,offset-50);paginatedRegister(key)};
+ $("page-next").onclick=()=>{paging[key]=offset+50;paginatedRegister(key)};
+}
+async function classAssignmentsPage(){
+ const [rows,staff]=await Promise.all([api("class-assignments"),api("case-assignees")]);
+ $("page").innerHTML=head("Class assignments","School-scoped staff assignments",admin()?btn("Assign staff to class","assign-class","",false):"")+
+ panel(table(["Staff","Class","Action"],rows.map(x=>[
+ plain(staff.find(y=>y.user_id===x.user_id)?.label||"Staff #"+x.user_id),plain(x.class_name),
+ admin()?btn("Remove","remove-class",x.id):"—"])));
+}
+async function guardianPage(){
+ $("page").innerHTML=head("Guardians","View guardian contacts through individual learner profiles")+
+ panel('<p>Guardian details are restricted to authorised school management staff. Open a learner profile to view or add guardians.</p>'+
+ btn("Open learners","go-learners"));
+}
+
 async function listPage(key){
  const config={
  learners:["Learners","Manage learner records and access learner history","learners",["name","admission_no","grade","class_name"],["Learner","Admission","Grade","Class"]],
@@ -175,6 +203,8 @@ async function details(key,id){
  content+=panel(table(["Field","Value"],items.map(x=>[plain(x[0]),plain(x[1])])),"Learner information");
  if(d.incidents)content+=panel(table(["Incident","Location","Status","Date"],d.incidents.map(x=>[link("#"+x.id,"incidents",x.id),plain(x.location),pill(x.status),plain(x.date.slice(0,10))])),"Incident history");
  if(d.cases)content+=panel(table(["Case","Title","Status"],d.cases.map(x=>[link("#"+x.id,"cases",x.id),plain(x.title),pill(x.status)])),"Cases");
+ if(manager()){const guardians=await api("guardians?learner_id="+d.id);content+=panel(table(["Name","Relationship","Email","Phone"],guardians.map(x=>[plain(x.name),plain(x.relationship),plain(x.email),plain(x.phone)]))+
+ btn("Add guardian","add-guardian",d.id),"Guardian contacts")}
  $("page").innerHTML=content;return;
  }
  if(key==="incidents"){
@@ -183,9 +213,14 @@ async function details(key,id){
  panel(table(["Field","Details"],[["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details");return;
  }
  if(key==="cases"){
+ const [events,tasks]=await Promise.all([api("cases/"+id+"/timeline"),api("cases/"+id+"/follow-ups")]);
  $("page").innerHTML=breadcrumb+head("Case #"+id,d.title,btn("Change status","edit-case",id)+btn("Assign staff","assign-case",id))+
  panel(table(["Field","Value"],[["Learner",link("#"+d.learner_id,"learners",d.learner_id)],["Status",pill(d.status)],["Assigned user",plain(d.assigned_user_id||"Not assigned")]]),"Case information")+
- panel(table(["Linked incident"],d.incident_ids.map(x=>[link("#"+x,"incidents",x)])),"Linked incidents");return;
+ panel(table(["Linked incident"],d.incident_ids.map(x=>[link("#"+x,"incidents",x)])),"Linked incidents")+
+ panel(table(["Type","Note","Date"],events.map(x=>[pill(x.kind),plain(x.note),plain(x.created_at.slice(0,16))]))+
+ btn("Add case note","add-case-note",id),"Case timeline")+
+ panel(table(["Task","Owner","Due","Status"],tasks.map(x=>[plain(x.summary),plain(x.owner_user_id),plain(x.due_at.slice(0,16)),btn(x.status,"update-followup",x.id)]))+
+ btn("Schedule follow-up","add-followup",id),"Follow-up tasks");return;
  }
 }
 async function reports(){
@@ -215,6 +250,9 @@ async function render(){
  else if(key==="dashboard")await dashboard();
  else if(key==="reports")await reports();
  else if(key==="learners")await learnerDirectory();
+ else if(key==="cases"||key==="incidents")await paginatedRegister(key);
+ else if(key==="class-assignments")await classAssignmentsPage();
+ else if(key==="guardians")await guardianPage();
  else if(key==="settings")await settings();
  else if(key==="subscription")await subscription();
  else if(key==="notifications")await notifications();
@@ -228,6 +266,11 @@ async function openAction(action,id){
  const learners=async()=>choices(await schoolLearners(),"id","name");
  const incidents=async()=>choices(await api("incidents"),"id","id").map(x=>[x[0],"Incident #"+x[0]]);
  switch(action){
+ case "add-guardian":name="Add guardian";kind="guardians";body=input("learner_id","Learner ID","number",id,'readonly')+input("name","Name","text","","required")+input("relationship","Relationship","text","","required")+input("email","Email","email","","required")+input("phone","Phone");break;
+ case "add-case-note":name="Record case timeline note";kind="case-timeline:"+id;body=options("kind","Type",["note","meeting","referral","decision","evidence_reference","appeal"].map(x=>[x,x]))+area("note","Note");break;
+ case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
+ case "update-followup":name="Update follow-up";kind="followup-update:"+id;body=options("status","Status",["open","in_progress","completed","cancelled"].map(x=>[x,x]));break;
+ case "assign-class":name="Assign class";kind="class-assignments";body=options("user_id","Staff",(await api("members")).filter(x=>x.active).map(x=>[x.user_id,x.email]))+input("class_name","Class","text","","required");break;
  case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. File must contain headers: admission_no, first_name, surname, grade, class_name. Duplicates are skipped; maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
  case "create-learner":name="New learner";kind="learners";body=input("admission_no","Admission number","text","","required")+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required")+input("class_name","Class","text","","required");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
@@ -260,13 +303,18 @@ async function submitForm(f){
  let k=f.dataset.form,data=getData(f),url=k,method="POST",go=path().split("/")[0];
  const split=k.split(":");const id=split[1];const prefix=split[0];
  const intFields=["learner_id","offence_id","incident_id","severity","case_id","repeat_threshold","assigned_user_id"];
- for(const field of intFields)if(data[field]!==undefined&&data[field]!=="")data[field]=Number(data[field]);
+ for(const field of [...intFields,"owner_user_id","user_id"])if(data[field]!==undefined&&data[field]!=="")data[field]=Number(data[field]);
  if(data.active!==undefined)data.active=data.active==="true";
  if(prefix==="learner-update"){url="learners/"+id;method="PATCH";go="learners/"+id}
  if(prefix==="incident-review"){url="incidents/"+id+"/review";method="PATCH";go="incidents/"+id}
  if(prefix==="case-status"){url="cases/"+id;method="PATCH";go="cases/"+id}
  if(prefix==="case-assignment"){url="cases/"+id+"/assign";method="PATCH";data.assigned_user_id=data.assigned_user_id||null;go="cases/"+id}
  if(prefix==="member-update"){url="members/"+id;method="PATCH";go="staff"}
+ if(prefix==="case-timeline"){url="cases/"+id+"/timeline";go="cases/"+id}
+ if(prefix==="case-followup"){url="cases/"+id+"/follow-ups";data.due_at=new Date(data.due_at).toISOString();go="cases/"+id}
+ if(prefix==="followup-update"){url="follow-ups/"+id;method="PATCH";go="cases"}
+ if(k==="guardians")go="learners/"+data.learner_id;
+ if(k==="class-assignments")go="class-assignments";
  if(prefix==="offence-update"){url="offences/"+id;method="PATCH";data.severity=Number(data.severity);go="offences"}
  if(prefix==="intervention-update"){url="interventions/"+id;method="PATCH";go="interventions"}
  if(prefix==="task-update"){url="review-tasks/"+id;method="PATCH";go="tasks"}
@@ -328,6 +376,8 @@ document.addEventListener("click",async e=>{
  const a=e.target.closest("[data-action]");if(a){
   const x=a.dataset.action;
   if(x==="close"){close();return}if(x==="reload"){render();return}
+  if(x==="go-learners"){navigate("learners");return}
+  if(x==="remove-class"){if(!confirm("Remove class assignment?"))return;try{await api("class-assignments/"+a.dataset.id,"DELETE");toast("Removed");render()}catch(err){toast(err.message,true)}return}
   try{await openAction(x,a.dataset.id)}catch(err){toast(err.message,true)}
  }
  if(e.target.id==="logout"){try{await api("logout","POST");location.reload()}catch(err){toast(err.message,true)}}
