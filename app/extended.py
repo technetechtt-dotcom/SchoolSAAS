@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from collections import Counter
 import csv
 import io
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import String, ForeignKey, DateTime, Text, select, func
+from sqlalchemy import String, ForeignKey, DateTime, Text, select, func, or_
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from app import main as m
 
@@ -207,3 +207,40 @@ def subscription(ctx=Depends(m.require(*ADMIN)),s:Session=Depends(m.db)):
     if not school:raise HTTPException(404,"School not found")
     return {"plan":school.plan,"status":school.status,"billing_enabled":False,
             "message":"Billing not configured. No payments are collected."}
+
+
+class SchoolSwitch(BaseModel):
+    school_id:int
+
+@router.get("/directory/learners")
+def learner_directory(q:str="",limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0),
+                      s:Session=Depends(m.db),ctx=Depends(m.current)):
+    query=select(m.Learner).where(m.Learner.school_id==ctx["sid"])
+    if ctx["role"]=="educator":
+        if not ctx["assigned_class"]:return {"items":[],"total":0,"limit":limit,"offset":offset}
+        query=query.where(m.Learner.class_name==ctx["assigned_class"])
+    if q.strip():
+        term="%"+q.strip().replace("%",r"\%").replace("_",r"\_")+"%"
+        query=query.where(or_(m.Learner.first_name.ilike(term),m.Learner.surname.ilike(term),
+            m.Learner.admission_no.ilike(term),m.Learner.class_name.ilike(term)))
+    total=s.scalar(select(func.count()).select_from(query.subquery()))
+    rows=s.scalars(query.order_by(m.Learner.surname,m.Learner.id).offset(offset).limit(limit)).all()
+    return {"items":[{"id":x.id,"name":x.first_name+" "+x.surname,"admission_no":x.admission_no,
+            "grade":x.grade,"class_name":x.class_name} for x in rows],
+            "total":total,"limit":limit,"offset":offset}
+
+@router.get("/mine/schools")
+def my_schools(s:Session=Depends(m.db),ctx=Depends(m.current)):
+    rows=s.execute(select(m.Membership,m.School).join(m.School,m.Membership.school_id==m.School.id)
+        .where(m.Membership.user_id==ctx["uid"],m.Membership.active==True,m.School.status=="active")).all()
+    return [{"id":sch.id,"name":sch.name,"role":mem.role,"current":sch.id==ctx["sid"]} for mem,sch in rows]
+
+@router.post("/mine/schools/switch")
+def switch_school(data:SchoolSwitch,response:Response,s:Session=Depends(m.db),ctx=Depends(m.current)):
+    membership=s.scalar(select(m.Membership).where(m.Membership.school_id==data.school_id,
+        m.Membership.user_id==ctx["uid"],m.Membership.active==True))
+    school=s.get(m.School,data.school_id)
+    if not membership or not school or school.status!="active":raise HTTPException(403,"School access denied")
+    response.set_cookie("session",m.issue_token(ctx["uid"],school.id),httponly=True,
+        secure=m.os.getenv("COOKIE_SECURE","false")=="true",samesite="lax",max_age=28800)
+    return {"school":school.name,"role":membership.role}
