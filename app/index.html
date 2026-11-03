@@ -36,7 +36,7 @@ textarea{min-height:100px;resize:vertical}form{display:grid;gap:13px}.form-actio
 </style></head><body>
 <header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div id="account"></div></header>
 <section id="login-screen"><div class="auth-grid">
-<div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="venus-primary"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p class="subtle">Account recovery requires a school administrator while password reset is being developed.</p></div>
+<div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="venus-primary"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button></p><p class="subtle">Password recovery requires a school administrator while reset email delivery is being developed.</p></div>
 <div class="panel"><h2>Register a school</h2><p class="subtle">Create an isolated demonstration workspace. Use fictional learner records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" pattern="[a-z0-9-]{3,40}" required placeholder="example-school"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
 </div></section>
 <div id="app-shell" class="shell" hidden><aside id="sidebar"><nav id="nav" aria-label="Main navigation"></nav></aside><main id="main" tabindex="-1"><div id="page"></div></main></div>
@@ -209,9 +209,9 @@ async function openAction(action,id){
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]]);break;
  case "create-incident":name="Report incident";kind="incidents";body=options("learner_id","Learner",await learners())+options("offence_id","Offence",(await schoolOffences()).map(x=>[x.id,x.code+" · "+x.name]))+options("location","Location",["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"].map(x=>[x,x]))+area("description","Description")+options("immediate_action","Immediate action",["Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x]));break;
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
- case "create-case":name="New case";kind="cases";body=options("learner_id","Learner",await learners())+input("title","Case title","text","","required")+input("incident_ids","Linked incident IDs (comma-separated)","text","","required");break;
+ case "create-case":{name="New case";kind="cases";const l=await learners(),i=await api("incidents");body=options("learner_id","Learner",l)+input("title","Case title","text","","required")+"<div><label>Linked incidents</label><div class=\"stack\" id=\"case-incident-choices\">"+i.map(x=>"<label><input style=\"width:auto;min-height:auto\" type=\"checkbox\" name=\"linked_incident\" value=\""+esc(x.id)+"\" data-learner=\""+esc(x.learner_id)+"\"> Incident #"+esc(x.id)+"</label>").join("")+"</div><p class=\"subtle\">Select incidents for the chosen learner; only matching incidents will be shown.</p></div>";break;}
  case "edit-case":data=await api("cases/"+id);name="Update case";kind="case-status:"+id;body=options("status","Case status",["open","monitoring","hod_review","smt_review","formal_process","awaiting_outcome","closed","reopened"].map(x=>[x,x]),data.status);break;
- case "assign-case":name="Assign case";kind="case-assignment:"+id;body=options("assigned_user_id","Staff member",[[0,"Unassigned"],...(await api("members")).filter(x=>x.active).map(x=>[x.id,x.email])]);break;
+ case "assign-case":name="Assign case";kind="case-assignment:"+id;body=options("assigned_user_id","Staff member",[[0,"Unassigned"],...(await api("members")).filter(x=>x.active).map(x=>[x.user_id,x.email])]);break;
  case "invite":name="Invite staff";kind="invitations";body=input("email","Staff email","email","","required")+options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]))+input("assigned_class","Assigned class (educator)");break;
  case "edit-member":data=(await api("members")).find(x=>String(x.id)===String(id));if(!data)throw Error("Staff member not found");name="Edit staff permissions";kind="member-update:"+id;body=options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]),data.role)+options("active","Account status",[["true","Active"],["false","Deactivated"]],String(data.active))+input("assigned_class","Assigned class", "text",data.assigned_class||"");break;
  case "create-intervention":name="Record intervention";kind="interventions";body=options("incident_id","Incident",await incidents())+options("type","Intervention type",["Restorative conversation","Parent meeting","Behaviour agreement","Support referral","Monitoring"].map(x=>[x,x]))+area("notes","Notes");break;
@@ -223,10 +223,12 @@ async function openAction(action,id){
  case "create-appointment":name="Schedule meeting";kind="appointments";body=options("learner_id","Learner",await learners())+input("title","Meeting title","text","","required")+input("scheduled_at","Date and time","datetime-local","","required");break;
  case "edit-appointment":data=(await api("appointments")).find(x=>String(x.id)===String(id));name="Update meeting";kind="appointment-update:"+id;body=options("status","Status",["scheduled","completed","cancelled"].map(x=>[x,x]),data.status);break;
  case "create-document":name="Create document draft";kind="documents";body=options("learner_id","Learner",await learners())+input("title","Document title","text","","required")+options("document_type","Document type",["letter","meeting_request","outcome","other"].map(x=>[x,x]))+area("body","Draft text (staff approval required)");break;
+ case "accept-invitation":name="Accept staff invitation";kind="invitations/accept";body=input("token","Invitation token","text","","required")+input("password","Account password (12+ characters)","password","","minlength=\"12\" required");break;
  case "view-document":data=await api("documents/"+id);modal(data.title,panel('<p style="white-space:pre-wrap">'+esc(data.body)+'</p><p class="subtle">Draft only. No letter has been sent.</p>'));return;
  default:return;
  }
  modal(name,jsonForm(kind,body,name.startsWith("Edit")?"Save changes":"Save"));
+ if(action==="create-case"){const update=()=>{const learner=$("modal-body").querySelector("[name=learner_id]").value;$("modal-body").querySelectorAll("[name=linked_incident]").forEach(ch=>{ch.parentElement.hidden=ch.dataset.learner!==learner;if(ch.dataset.learner!==learner)ch.checked=false})};$("modal-body").querySelector("[name=learner_id]").addEventListener("change",update);update()}
 }
 async function submitForm(f){
  let k=f.dataset.form,data=getData(f),url=k,method="POST",go=path().split("/")[0];
@@ -244,14 +246,16 @@ async function submitForm(f){
  if(prefix==="appeal-update"){url="appeals/"+id;method="PATCH";go="appeals"}
  if(prefix==="appointment-update"){url="appointments/"+id;method="PATCH";go="appointments"}
  if(k==="settings"){url="settings";method="PUT";go="settings"}
- if(k==="cases"){data.incident_ids=data.incident_ids.split(",").map(x=>Number(x.trim()));go="cases"}
+ if(k==="cases"){data.incident_ids=Array.from(f.querySelectorAll("[name=linked_incident]:checked")).map(x=>Number(x.value));if(!data.incident_ids.length){toast("Select at least one incident",true);return}go="cases"}
  if(k==="parent-contacts")go="contacts";
  if(k==="invitations")go="staff";
+ if(k==="invitations/accept")go="dashboard";
  if(k==="appointments"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="appointments"}
  if(k==="interventions")go="interventions";
  if(k==="documents")go="documents";
  if(k==="appeals")go="appeals";
  try{const result=await api(url,method,data);close();
+ if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
  toast("Saved successfully");navigate(go);
  }catch(e){toast(e.message,true)}
