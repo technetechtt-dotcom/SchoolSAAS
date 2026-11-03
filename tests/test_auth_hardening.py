@@ -37,6 +37,20 @@ def test_sessions_case_assignees_and_csv_formula_safety():
         assignees=hod.get("/api/case-assignees")
         assert assignees.status_code==200
         assert any(item["label"]=="hod@school.test" for item in assignees.json())
+        # An existing staff account can join another school with its own password.
+        other=TestClient(main.app)
+        assert send(other,"/api/register",{"school_name":"Other School","slug":"other-school",
+            "email":"owner@other.test","password":"different-owner-password"}).status_code==201
+        second_invite=send(other,"/api/invitations",{"email":"hod@school.test","role":"hod"}).json()["token"]
+        assert send(hod,"/api/invitations/accept",{"token":second_invite,
+            "password":"demo-password-987654"}).status_code==201
+        before_switch=hod.cookies.get("session")
+        switched=send(hod,"/api/mine/schools/switch",{"school_id":2})
+        assert switched.status_code==200
+        assert hod.get("/api/me").json()["sid"]==2
+        old_school=TestClient(main.app)
+        old_school.cookies.set("session",before_switch)
+        assert old_school.get("/api/me").status_code==401
         assert admin.get("/api/me").status_code==200
         assert send(admin,"/api/logout",{}).status_code==200
         old=TestClient(main.app)
