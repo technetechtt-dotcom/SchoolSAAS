@@ -473,3 +473,7 @@ def reports(s:Session=Depends(db),ctx=Depends(require('school_admin','principal'
     return {'by_offence':dict(Counter(offence_names.get(i.offence_id,'Unknown') for i in items)),
         'by_grade':dict(Counter(grades.get(i.learner_id,'Unknown') for i in items)),
         'by_location':dict(Counter(i.location for i in items))}
+
+# Register the v0.3 school-scoped workflow APIs and their database models.
+from app.extended import router as extended_router
+app.include_router(extended_router)
