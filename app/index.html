@@ -36,7 +36,7 @@ textarea{min-height:100px;resize:vertical}form{display:grid;gap:13px}.form-actio
 </style></head><body>
 <header><div class="actions"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span> <small style="font-size:11px;font-weight:500;color:#b4c7e5">/ SaaS</small></div></div><div class="actions"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." style="max-width:210px;min-height:35px" hidden><div id="account"></div></div></header>
 <section id="login-screen"><div class="auth-grid">
-<div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><p class="subtle" style="background:#eef5ff;border-radius:10px;padding:12px;margin:0 0 14px">Local demo login tip<br>School identifier: <strong>demo</strong><br>Email: <strong>admin@demo.local</strong><br>Use the password configured in your local environment.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="demo"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required placeholder="admin@demo.local"></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button></p><p class="subtle">Password recovery requires a school administrator while reset email delivery is being developed.</p></div>
+<div class="panel"><h2>Sign in</h2><p class="subtle">Open your school's secure workspace.</p><p class="subtle" style="background:#eef5ff;border-radius:10px;padding:12px;margin:0 0 14px">Local demo login tip<br>School identifier: <strong>demo</strong><br>Email: <strong>admin@demo.local</strong><br>Use the password configured in your local environment.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="demo"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required placeholder="admin@demo.local"></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><p><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button></p><p><button type="button" class="secondary" data-action="request-reset">Forgot password?</button></p></div>
 <div class="panel"><h2>Register a school</h2><p class="subtle">Create an isolated demonstration workspace. Use fictional learner records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" required minlength="3" maxlength="40" title="3–40 lowercase letters, numbers, or hyphens" placeholder="example-school" autocomplete="off"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
 </div></section>
 <div id="app-shell" class="shell" hidden><aside id="sidebar"><nav id="nav" aria-label="Main navigation"></nav></aside><main id="main" tabindex="-1"><div id="page"></div></main></div>
@@ -276,6 +276,8 @@ async function openAction(action,id){
  const learners=async()=>choices(await schoolLearners(),"id","name");
  const incidents=async()=>choices(await api("incidents"),"id","id").map(x=>[x[0],"Incident #"+x[0]]);
  switch(action){
+ case "request-reset":name="Request password reset";kind="account-recovery/request";body=input("email","Account email","email","","required");break;
+ case "complete-reset":name="Set new password";kind="account-recovery/complete";body=input("token","Recovery token","text",id,'readonly required')+input("password","New password (12+ characters)","password","","minlength="12" required');break;
  case "add-guardian":name="Add guardian";kind="guardians";body=input("learner_id","Learner ID","number",id,'readonly')+input("name","Name","text","","required")+input("relationship","Relationship","text","","required")+input("email","Email","email","","required")+input("phone","Phone");break;
  case "add-case-note":name="Record case timeline note";kind="case-timeline:"+id;body=options("kind","Type",["note","meeting","referral","decision","evidence_reference","appeal"].map(x=>[x,x]))+area("note","Note");break;
  case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
@@ -355,11 +357,14 @@ async function submitForm(f){
  if(k==="parent-contacts")go="contacts";
  if(k==="invitations")go="staff";
  if(k==="invitations/accept")go="dashboard";
+ if(k.startsWith("account-recovery/"))go="dashboard";
  if(k==="appointments"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="appointments"}
  if(k==="interventions")go="interventions";
  if(k==="documents")go="documents";
  if(k==="appeals")go="appeals";
  try{const result=await api(url,method,data);unsaved=false;close();
+ if(k==="account-recovery/complete"){history.replaceState(null,"",location.pathname);toast("Password changed. Sign in again.");return}
+ if(k==="account-recovery/request"){toast(result.message||"Check your email for recovery instructions.");return}
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
@@ -398,6 +403,6 @@ document.addEventListener("input",e=>{if(e.target.closest("#dialog form")||e.tar
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("dialog").classList.contains("open"))close();if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}});
 window.addEventListener("beforeunload",e=>{if(unsaved){e.preventDefault();e.returnValue=""}});
 window.addEventListener("hashchange",()=>render());
-(async()=>{try{user=await api("me");if(!user.authenticated)return;$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
+(async()=>{if(location.hash.startsWith("#reset=")){const token=location.hash.slice(7);try{await openAction("complete-reset",token)}catch(e){toast(e.message,true)}return}try{user=await api("me");if(!user.authenticated)return;$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
 })();
 </script></body></html>
