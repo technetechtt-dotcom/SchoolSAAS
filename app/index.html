@@ -95,6 +95,7 @@ function filterTable(data,search,fields){const term=search.toLowerCase().trim();
 function searchBox(placeholder="Search records") {return '<div class="search-row"><input id="list-search" type="search" aria-label="'+esc(placeholder)+'" placeholder="'+esc(placeholder)+'"><span class="result" id="result-count"></span></div>'}
 function bindSearch(data,fields,draw){const inp=$("list-search");if(!inp)return;const update=()=>{let rows=filterTable(data,inp.value,fields);$("result-count").textContent=rows.length+" of "+data.length+" records";$("list-table").innerHTML=draw(rows.slice(0,100));};inp.addEventListener("input",update);update()}
 const schoolLearners=async()=>api("learners");
+let directoryState={q:"",offset:0,total:0};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Educator workspace","Record behaviour concerns and review your own reports",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
@@ -103,6 +104,21 @@ async function dashboard(){
  '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Incident locations")+
  panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>';
+}
+async function learnerDirectory(){
+ const state=directoryState;
+ const response=await api("directory/learners?limit=50&offset="+state.offset+"&q="+encodeURIComponent(state.q));
+ state.total=response.total;
+ $("page").innerHTML=head("Learners","Search and manage learner records across all grades",user.role==="educator"?"":btn("Add learner","create-learner","",false))+
+ panel('<div class="search-row"><input id="directory-query" type="search" placeholder="Name, admission number or class" aria-label="Search learners" value="'+esc(state.q)+'"><span class="result">'+esc(state.total)+' learner records</span></div><div id="learner-records">'+
+ table(["Learner","Admission","Grade","Class"],response.items.map(x=>[link(x.name,"learners",x.id),plain(x.admission_no),plain(x.grade),plain(x.class_name)]))+'</div>'+
+ '<div class="toolbar" style="margin-top:14px"><span class="subtle">Showing '+(response.total?state.offset+1:0)+'–'+Math.min(state.offset+50,state.total)+' of '+state.total+'</span><div class="actions">'+
+ '<button type="button" class="secondary" id="prev-page" '+(state.offset===0?"disabled":"")+'>Previous</button>'+
+ '<button type="button" class="secondary" id="next-page" '+(state.offset+50>=state.total?"disabled":"")+'>Next</button></div></div>');
+ let searchTimer;
+ $("directory-query").addEventListener("input",e=>{clearTimeout(searchTimer);const val=e.target.value;searchTimer=setTimeout(()=>{state.q=val;state.offset=0;learnerDirectory()},300)});
+ $("prev-page").onclick=()=>{state.offset=Math.max(0,state.offset-50);learnerDirectory()};
+ $("next-page").onclick=()=>{state.offset+=50;learnerDirectory()};
 }
 async function listPage(key){
  const config={
@@ -191,6 +207,7 @@ async function render(){
  try{if(id&&["learners","incidents","cases"].includes(key))await details(key,id);
  else if(key==="dashboard")await dashboard();
  else if(key==="reports")await reports();
+ else if(key==="learners")await learnerDirectory();
  else if(key==="settings")await settings();
  else if(key==="subscription")await subscription();
  else if(key==="notifications")await notifications();
@@ -260,8 +277,19 @@ async function submitForm(f){
  toast("Saved successfully");navigate(go);
  }catch(e){toast(e.message,true)}
 }
+async function schoolSelector(){
+ try{const all=await api("mine/schools");if(all.length<=1)return;
+ const current=all.find(x=>x.current);
+ const control=document.createElement("select");
+ control.setAttribute("aria-label","Switch school workspace");control.style.maxWidth="180px";
+ control.innerHTML=all.map(x=>'<option value="'+esc(x.id)+'" '+(x.current?"selected":"")+'>'+esc(x.name)+'</option>').join("");
+ control.onchange=async()=>{if(!confirm("Switch school workspace?")){control.value=String(current.id);return}
+ try{await api("mine/schools/switch","POST",{school_id:Number(control.value)});location.hash="#/dashboard";location.reload()}catch(e){toast(e.message,true);control.value=String(current.id)}};
+ $("account").prepend(control)
+ }catch(e){toast(e.message,true)}
+}
 async function signIn(type,f){
- try{await api(type,"POST",getData(f));user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard")}
+ try{await api(type,"POST",getData(f));user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';navigate("dashboard");schoolSelector()}
  catch(e){toast(e.message,true)}
 }
 document.addEventListener("submit",e=>{e.preventDefault();const f=e.target;if(f.id==="login"||f.id==="register")signIn(f.id,f);else if(f.dataset.form)submitForm(f)});
@@ -278,6 +306,6 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("input",e=>{if(e.target.closest("#dialog form"))unsaved=true});
 window.addEventListener("hashchange",()=>render());
-(async()=>{try{user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render()}catch{}})();
+(async()=>{try{user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
 })();
 </script></body></html>
