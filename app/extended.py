@@ -244,3 +244,23 @@ def switch_school(data:SchoolSwitch,response:Response,s:Session=Depends(m.db),ct
     response.set_cookie("session",m.issue_token(ctx["uid"],school.id),httponly=True,
         secure=m.os.getenv("COOKIE_SECURE","false")=="true",samesite="lax",max_age=28800)
     return {"school":school.name,"role":membership.role}
+
+
+@router.get("/analytics/overview")
+def analytics(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    sid=ctx["sid"]
+    items=s.scalars(select(m.Incident).where(m.Incident.school_id==sid)).all()
+    offences={o.id:o for o in s.scalars(select(m.Offence).where(m.Offence.school_id==sid)).all()}
+    severity=Counter(str(offences[i.offence_id].severity) for i in items if i.offence_id in offences)
+    month=Counter(i.created_at.strftime("%Y-%m") for i in items)
+    involved=len({i.learner_id for i in items})
+    repeat_pairs=Counter((i.learner_id,i.offence_id) for i in items)
+    repeat_learners=len({learner for (learner,offence),n in repeat_pairs.items() if n>=2})
+    interventions=s.scalars(select(m.Intervention).where(m.Intervention.school_id==sid)).all()
+    outstanding=s.scalar(select(func.count()).select_from(m.ReviewTask).where(
+        m.ReviewTask.school_id==sid,m.ReviewTask.status.in_(("open","in_progress"))))
+    return {"severity":dict(severity),"months":dict(sorted(month.items())),"learners_with_incidents":involved,
+        "repeat_learners":repeat_learners,"repeat_rate":round(100*repeat_learners/involved,1) if involved else 0,
+        "interventions":len(interventions),
+        "completed_interventions":sum(x.outcome in ("improved","partially_improved","closed") for x in interventions),
+        "pending_reviews":outstanding}
