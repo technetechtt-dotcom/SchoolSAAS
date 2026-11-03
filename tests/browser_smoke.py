@@ -32,6 +32,8 @@ with sync_playwright() as playwright:
     page.set_viewport_size({"width":390,"height":844})
     page.locator("#menu-toggle").click()
     assert page.locator("#sidebar").evaluate("(node)=>node.classList.contains('open')")
+    page.locator("#menu-toggle").click()
+    assert not page.locator("#sidebar").evaluate("(node)=>node.classList.contains('open')")
     page.get_by_role("button",name="Sign out").click()
     page.locator("#login-screen:not([hidden])").wait_for()
     browser.close()
