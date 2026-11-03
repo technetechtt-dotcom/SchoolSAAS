@@ -293,7 +293,7 @@ async function submitForm(f){
  if(k==="interventions")go="interventions";
  if(k==="documents")go="documents";
  if(k==="appeals")go="appeals";
- try{const result=await api(url,method,data);close();
+ try{const result=await api(url,method,data);unsaved=false;close();
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){modal("Invitation generated",panel('<p>Share this token privately with the intended staff member. It expires in 72 hours.</p><textarea readonly aria-label="Invitation token">'+esc(result.token)+'</textarea><p class="subtle">The recipient needs to redeem it using the invitation acceptance API. Email delivery and an acceptance page still need implementation.</p>'));return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
@@ -330,6 +330,6 @@ document.addEventListener("input",e=>{if(e.target.closest("#dialog form")||e.tar
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("dialog").classList.contains("open"))close();if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}});
 window.addEventListener("beforeunload",e=>{if(unsaved){e.preventDefault();e.returnValue=""}});
 window.addEventListener("hashchange",()=>render());
-(async()=>{try{user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
+(async()=>{try{user=await api("me");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();
 })();
 </script></body></html>
