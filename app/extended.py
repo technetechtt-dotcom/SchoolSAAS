@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from collections import Counter
 import csv
 import io
-from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, Request, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import String, ForeignKey, DateTime, Text, select, func, or_
 from sqlalchemy.orm import Mapped, mapped_column, Session
@@ -250,13 +250,14 @@ def my_schools(s:Session=Depends(m.db),ctx=Depends(m.current)):
     return [{"id":sch.id,"name":sch.name,"role":mem.role,"current":sch.id==ctx["sid"]} for mem,sch in rows]
 
 @router.post("/mine/schools/switch")
-def switch_school(data:SchoolSwitch,response:Response,s:Session=Depends(m.db),ctx=Depends(m.current)):
+def switch_school(data:SchoolSwitch,response:Response,request:Request,s:Session=Depends(m.db),ctx=Depends(m.current)):
     membership=s.scalar(select(m.Membership).where(m.Membership.school_id==data.school_id,
         m.Membership.user_id==ctx["uid"],m.Membership.active==True))
     school=s.get(m.School,data.school_id)
     if not membership or not school or school.status!="active":raise HTTPException(403,"School access denied")
     new_token=m.issue_token(ctx["uid"],school.id,s)
     s.commit()
+    m.revoke_token(request.cookies.get("session"),s)
     response.set_cookie("session",new_token,httponly=True,
         secure=m.os.getenv("COOKIE_SECURE","false")=="true",samesite="lax",max_age=28800)
     return {"school":school.name,"role":membership.role}
