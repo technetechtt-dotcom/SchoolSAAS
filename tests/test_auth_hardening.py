@@ -34,7 +34,7 @@ def test_sessions_case_assignees_and_csv_formula_safety():
         assert send(hod,"/api/invitations/accept",{"token":invite,"password":"demo-password-987654"}).status_code==201
         assert send(hod,"/api/login",{"school_slug":"security-school","email":"hod@school.test","password":"demo-password-987654"}).status_code==200
         assert hod.get("/api/members").status_code==403
-        assignees=hod.get("/api/cases/eligible-assignees")
+        assignees=hod.get("/api/case-assignees")
         assert assignees.status_code==200
         assert any(item["label"]=="hod@school.test" for item in assignees.json())
         assert admin.get("/api/me").status_code==200
