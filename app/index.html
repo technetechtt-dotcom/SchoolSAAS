@@ -276,13 +276,21 @@ async function submitForm(f){
  if(k==="academic"){url="settings/academic";method="PUT";data.academic_year=Number(data.academic_year);data.term=Number(data.term);go="settings"}
  if(k==="import-learners"){
    const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a CSV file",true);return}
-   const content=await file.text();
-   const lines=content.replace(/\r/g,"").split("\n").filter(x=>x.trim());
-   const header=lines.shift()?.split(",").map(x=>x.trim().toLowerCase());
+   const text=await file.text();
+   const parsed=[];let cells=[],value="",quoted=false;
+   for(let i=0;i<text.length;i++){const ch=text[i];
+    if(quoted){if(ch==='"'&&text[i+1]==='"'){value+='"';i++}else if(ch==='"')quoted=false;else value+=ch}
+    else if(ch==='"')quoted=true;
+    else if(ch===","){cells.push(value);value=""}
+    else if(ch==="\n"){cells.push(value);if(cells.some(x=>x.trim()))parsed.push(cells);cells=[];value=""}
+    else if(ch!=="\r")value+=ch;
+   }
+   cells.push(value);if(cells.some(x=>x.trim()))parsed.push(cells);
+   const header=parsed.shift()?.map(x=>x.trim().toLowerCase());
    const expected=["admission_no","first_name","surname","grade","class_name"];
-   if(!header||!expected.every(x=>header.includes(x))){toast("CSV headers must include admission_no,first_name,surname,grade,class_name",true);return}
-   if(lines.length>1000){toast("Maximum 1,000 learner rows per file",true);return}
-   const rows=lines.map(line=>{const parts=line.split(",");return Object.fromEntries(expected.map(x=>[x,(parts[header.indexOf(x)]||"").trim()]))});
+   if(!header||!expected.every(x=>header.includes(x))){toast("CSV must include admission_no, first_name, surname, grade and class_name",true);return}
+   if(parsed.length>1000){toast("Maximum 1,000 learner rows per file",true);return}
+   const rows=parsed.map(parts=>Object.fromEntries(expected.map(x=>[x,(parts[header.indexOf(x)]||"").trim()])));
    data={rows};url="learners/import";go="learners";
  }
  if(k==="cases"){data.incident_ids=Array.from(f.querySelectorAll("[name=linked_incident]:checked")).map(x=>Number(x.value));if(!data.incident_ids.length){toast("Select at least one incident",true);return}go="cases"}
