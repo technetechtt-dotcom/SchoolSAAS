@@ -223,10 +223,20 @@ async function details(key,id){
  btn("Schedule follow-up","add-followup",id),"Follow-up tasks");return;
  }
 }
-async function reports(){
- const [r,stats]=await Promise.all([api("reports/summary"),api("analytics/overview")]);const make=key=>table(["Category","Incident count"],Object.entries(r[key]).map(x=>[plain(x[0]),plain(x[1])]));
- $("page").innerHTML=head("Reports","School-scoped incident summaries. Exports are limited to authorised administrators.",admin()?'<a class="btn secondary" href="/api/reports/incidents.csv">Download CSV</a>':"")+
- '<div class="grid2">'+panel(bars(r.by_grade),"Incidents by grade")+panel(bars(r.by_offence),"Incidents by offence")+'</div>'+panel(bars(stats.months),"Monthly trend")+'<div class="grid2">'+panel(make("by_grade"),"Grade totals")+panel(make("by_offence"),"Offence totals")+'</div>'+panel(make("by_location"),"By location");
+async function reports(filters={}){
+ const [r,stats,filtered]=await Promise.all([api("reports/summary"),api("analytics/overview"),api("reports/filtered?"+new URLSearchParams(filters))]);
+ const make=(obj)=>table(["Category","Incident count"],Object.entries(obj).map(x=>[plain(x[0]),plain(x[1])]));
+ $("page").innerHTML=head("Reports","Filter school records by date, grade and class. Exports are administrator-only.",admin()?'<a class="btn secondary" href="/api/reports/incidents.csv">Download CSV</a>':"")+
+ panel('<form id="report-filters" class="grid2">'+input("start","From date","date",filters.start||"")+input("end","To date","date",filters.end||"")+
+ input("grade","Grade","text",filters.grade||"")+input("class_name","Class","text",filters.class_name||"")+
+ '<button type="submit">Apply report filters</button><button type="button" class="secondary" id="clear-reports">Clear filters</button></form>','Report filters')+
+ '<div class="cards"><div class="metric"><small>Matching incidents</small><strong>'+filtered.total+'</strong></div></div>'+
+ '<div class="grid2">'+panel(bars(filtered.by_grade),"Filtered incidents by grade")+panel(bars(filtered.by_status),"Filtered status")+'</div>'+
+ panel(bars(filtered.by_location),"Filtered locations")+
+ panel(bars(stats.months),"All-time monthly trend")+
+ '<div class="grid2">'+panel(make(r.by_grade),"All-time grade totals")+panel(make(r.by_offence),"All-time offences")+'</div>';
+ $("report-filters").onsubmit=e=>{e.preventDefault();const values=getData(e.target);reports(Object.fromEntries(Object.entries(values).filter(([k,v])=>v)))};
+ $("clear-reports").onclick=()=>reports({});
 }
 async function settings(){
  const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);$("page").innerHTML=head("School settings","Manage reviewed behaviour thresholds and academic context")+
