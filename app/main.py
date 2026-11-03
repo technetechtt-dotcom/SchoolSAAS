@@ -521,7 +521,13 @@ def patch_case(case_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Depends(re
         raise HTTPException(400,'Invalid status')
     c=s.scalar(select(Case).where(Case.id==case_id,Case.school_id==ctx['sid']))
     if not c:raise HTTPException(404,'Case not found')
-    c.status=data.status;log(s,ctx,'update','case',c.id);s.commit();return {'ok':True}
+    before=c.status
+    if before == data.status:return {'ok':True}
+    from app.operations import CaseEvent
+    c.status=data.status
+    s.add(CaseEvent(school_id=ctx['sid'],case_id=c.id,author_user_id=ctx['uid'],
+                    kind='decision',note='Case status changed from '+before+' to '+data.status))
+    log(s,ctx,'update','case',c.id);s.commit();return {'ok':True}
 
 @app.get('/api/interventions')
 def list_interventions(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
