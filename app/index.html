@@ -278,7 +278,7 @@ async function openAction(action,id){
  const incidents=async()=>choices(await api("incidents"),"id","id").map(x=>[x[0],"Incident #"+x[0]]);
  switch(action){
  case "request-reset":name="Request password reset";kind="account-recovery/request";body=input("email","Account email","email","","required");break;
- case "complete-reset":name="Set new password";kind="account-recovery/complete";body=input("token","Recovery token","text",id,'readonly required')+input("password","New password (12+ characters)","password","","minlength="12" required');break;
+ case "complete-reset":name="Set new password";kind="account-recovery/complete";body=input("token","Recovery token","text",id,'readonly required')+input("password","New password (12+ characters)","password","",'minlength="12" required');break;
  case "add-guardian":name="Add guardian";kind="guardians";body=input("learner_id","Learner ID","number",id,'readonly')+input("name","Name","text","","required")+input("relationship","Relationship","text","","required")+input("email","Email","email","","required")+input("phone","Phone");break;
  case "add-case-note":name="Record case timeline note";kind="case-timeline:"+id;body=options("kind","Type",["note","meeting","referral","decision","evidence_reference","appeal"].map(x=>[x,x]))+area("note","Note");break;
  case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
