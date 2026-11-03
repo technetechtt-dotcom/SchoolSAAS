@@ -3,7 +3,7 @@
 All personally identifying and learner support records are school-scoped.
 No automated sanction or disciplinary decision is made by these endpoints.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import String, Text, DateTime, ForeignKey, UniqueConstraint, select, func
@@ -176,3 +176,26 @@ def aggregates(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     open_cases=s.scalar(select(func.count()).select_from(m.Case).where(m.Case.school_id==sid,m.Case.status!="closed"))
     locs=s.execute(select(m.Incident.location,func.count()).where(m.Incident.school_id==sid).group_by(m.Incident.location)).all()
     return {"school":ctx["school"],"learners":learners,"incidents":incidents,"open_cases":open_cases,"locations":dict(locs)}
+
+
+@router.get("/reports/filtered")
+def filtered_report(start:date|None=None,end:date|None=None,grade:str|None=None,
+                    class_name:str|None=None,s:Session=Depends(m.db),
+                    ctx=Depends(m.require(*MANAGERS))):
+    if start and end and start>end:raise HTTPException(400,"End date precedes start date")
+    query=select(m.Incident).join(m.Learner,
+        (m.Learner.id==m.Incident.learner_id)&(m.Learner.school_id==m.Incident.school_id)).where(
+        m.Incident.school_id==ctx["sid"])
+    if start:query=query.where(m.Incident.created_at>=datetime.combine(start,time.min,tzinfo=timezone.utc))
+    if end:query=query.where(m.Incident.created_at<datetime.combine(end+timedelta(days=1),time.min,tzinfo=timezone.utc))
+    if grade:query=query.where(m.Learner.grade==grade)
+    if class_name:query=query.where(m.Learner.class_name==class_name)
+    sub=query.subquery()
+    count=s.scalar(select(func.count()).select_from(sub))
+    by_status=dict(s.execute(select(sub.c.status,func.count()).group_by(sub.c.status)).all())
+    by_location=dict(s.execute(select(sub.c.location,func.count()).group_by(sub.c.location)).all())
+    by_grade=dict(s.execute(select(m.Learner.grade,func.count()).join(
+        sub,sub.c.learner_id==m.Learner.id).where(m.Learner.school_id==ctx["sid"]).group_by(m.Learner.grade)).all())
+    return {"total":count,"by_status":by_status,"by_location":by_location,"by_grade":by_grade,
+        "filters":{"start":str(start) if start else None,"end":str(end) if end else None,
+            "grade":grade,"class_name":class_name}}
