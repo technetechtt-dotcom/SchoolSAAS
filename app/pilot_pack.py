@@ -219,6 +219,8 @@ def mfa_setup(s: Session = Depends(m.db), ctx=Depends(m.current)):
     user = s.get(m.User, ctx["uid"])
     if not user:
         raise HTTPException(404, "User not found")
+    if user.mfa_enabled:
+        raise HTTPException(409, "Disable the existing authenticator with its current code before replacing it")
     secret = pyotp.random_base32()
     user.mfa_secret = mfa_crypto.encrypt_secret(secret)
     user.mfa_enabled = False
