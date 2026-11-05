@@ -78,20 +78,20 @@ def record_security_event(s: Session, user_id: int, school_id: int | None, event
     s.flush()
     if email_user:
         user = s.get(m.User, user_id)
-        if user and mailer.smtp_ready():
-            try:
-                mailer.send_email(
-                    user.email,
-                    f"SchoolCare security alert: {event_type.replace('_', ' ')}",
-                    "A security-related change occurred on your SchoolCare account.\n\n"
-                    f"Event: {event_type}\n"
-                    f"Detail: {detail or 'n/a'}\n"
-                    f"When (UTC): {datetime.now(timezone.utc).isoformat()}\n\n"
-                    "If this was not you, reset your password and contact your school administrator.\n"
-                    f"{mailer.public_url()}\n")
-                evt.emailed = True
-            except Exception:
-                evt.emailed = False
+        if user:
+            from app.mail_outbox import send_or_queue
+            body = (
+                "A security-related change occurred on your SchoolCare account.\n\n"
+                f"Event: {event_type}\n"
+                f"Detail: {detail or 'n/a'}\n"
+                f"When (UTC): {datetime.now(timezone.utc).isoformat()}\n\n"
+                "If this was not you, reset your password and contact your school administrator.\n"
+                f"{mailer.public_url()}\n")
+            result = send_or_queue(
+                s, user.email,
+                f"SchoolCare security alert: {event_type.replace('_', ' ')}",
+                body, school_id=school_id)
+            evt.emailed = bool(result.get("sent"))
     return evt
 
 

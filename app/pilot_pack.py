@@ -650,22 +650,27 @@ def render_template(template_id: int, learner_id: int, s: Session = Depends(m.db
 
 
 # --- Parent portal ----------------------------------------------------------
-def _deliver_parent_invite(item: ParentAccess, learner: m.Learner, token: str, subject: str) -> tuple[bool, str]:
+def _deliver_parent_invite(item: ParentAccess, learner: m.Learner, token: str, subject: str,
+                           s: Session | None = None) -> tuple[bool, str]:
     """Attempt SMTP delivery; returns (emailed, notes). Updates delivery counters on item."""
     link = mailer.public_url(f"/#parent={token}")
     item.delivery_attempts = int(item.delivery_attempts or 0) + 1
     item.last_delivery_at = datetime.now(timezone.utc)
+    body = (f"You have been invited to acknowledge a SchoolCare notice for {learner.first_name}.\n\n"
+            f"Open this private link (expires in 7 days):\n{link}\n")
     if mailer.smtp_ready():
         try:
-            mailer.send_email(item.email, subject,
-                              f"You have been invited to acknowledge a SchoolCare notice for {learner.first_name}.\n\n"
-                              f"Open this private link (expires in 7 days):\n{link}\n")
+            mailer.send_email(item.email, subject, body)
             item.delivery_status = "emailed"
             item.delivery_notes = "Invitation emailed via SMTP"
             return True, item.delivery_notes
         except Exception as exc:
-            item.delivery_status = "failed"
-            item.delivery_notes = f"SMTP delivery failed: {exc}"
+            if s is not None:
+                from app.mail_outbox import enqueue_email
+                enqueue_email(s, item.email, subject, body, school_id=item.school_id,
+                              status="failed", last_error=str(exc))
+            item.delivery_status = "queued"
+            item.delivery_notes = f"SMTP failed — queued for retry; share private link ({exc})"
             return False, item.delivery_notes
     item.delivery_status = "manual"
     item.delivery_notes = "SMTP not configured; share private link/token with the guardian only"
@@ -688,10 +693,7 @@ def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
                         created_at=datetime.now(timezone.utc), delivery_status="pending",
                         delivery_attempts=0, delivery_notes="")
     s.add(item); s.flush()
-    emailed, notes = _deliver_parent_invite(item, learner, token, subject)
-    if item.delivery_status == "failed":
-        m.log(s, ctx, "invite_failed", "parent_access", item.id); s.commit()
-        raise HTTPException(503, "Parent invite email delivery failed")
+    emailed, notes = _deliver_parent_invite(item, learner, token, subject, s)
     m.log(s, ctx, "invite", "parent_access", item.id); s.commit()
     out = {"id": item.id, "emailed": emailed, "expires_in_hours": 168, "subject": subject,
            "delivery_status": item.delivery_status, "delivery_attempts": item.delivery_attempts,
@@ -721,10 +723,7 @@ def parent_notice_resend(notice_id: int, s: Session = Depends(m.db),
     # Issue a fresh token for resend so prior leaked tokens are superseded
     token = secrets.token_urlsafe(32)
     item.token_hash = hashlib.sha256(token.encode()).hexdigest()
-    emailed, notes = _deliver_parent_invite(item, learner, token, item.subject)
-    if item.delivery_status == "failed":
-        m.log(s, ctx, "resend_failed", "parent_access", item.id); s.commit()
-        raise HTTPException(503, "Parent notice resend failed")
+    emailed, notes = _deliver_parent_invite(item, learner, token, item.subject, s)
     m.log(s, ctx, "resend", "parent_access", item.id); s.commit()
     out = {"id": item.id, "emailed": emailed, "delivery_status": item.delivery_status,
            "delivery_attempts": item.delivery_attempts, "delivery_notes": notes, "notice": notes}

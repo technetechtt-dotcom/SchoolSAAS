@@ -157,7 +157,7 @@ def test_upgrade_head_on_populated_historical_schema(tmp_path):
 
     with create_engine(url).connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0010_staff_access_reviews"
+        assert version == "0011_email_outbox"
         assert conn.execute(text("SELECT COUNT(*) FROM learners")).scalar_one() == 1
         assert conn.execute(text("SELECT first_name FROM learners WHERE id=7")).scalar_one() == "Ada"
         assert conn.execute(text("SELECT COUNT(*) FROM incidents")).scalar_one() == 1
@@ -181,6 +181,7 @@ def test_upgrade_head_on_populated_historical_schema(tmp_path):
         assert "mfa_recovery_codes" in tables
         assert "security_events" in tables
         assert "staff_access_reviews" in tables
+        assert "email_outbox" in tables
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(invoices)")).all()}
         assert {"gateway", "payment_ref", "paid_at"} <= cols
         learner_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(learners)")).all()}

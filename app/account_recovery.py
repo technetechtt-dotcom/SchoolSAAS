@@ -1,7 +1,7 @@
 """Password recovery with hashed one-use tokens and configured SMTP delivery."""
 from datetime import datetime,timezone,timedelta
 import hashlib,secrets
-from fastapi import APIRouter,Depends,HTTPException
+from fastapi import APIRouter,Depends,HTTPException,Request
 from pydantic import BaseModel,Field
 from sqlalchemy import String,ForeignKey,DateTime,Boolean,select,func,delete
 from sqlalchemy.orm import Session,Mapped,mapped_column
@@ -25,7 +25,8 @@ class CompleteReset(BaseModel):
     password:str=Field(min_length=12,max_length=128)
 
 @router.post("/request")
-def request_reset(data:RequestReset,s:Session=Depends(m.db)):
+def request_reset(data:RequestReset,request:Request,s:Session=Depends(m.db)):
+    m.check_auth_rate_limits(s, request)
     if not mailer.smtp_ready():
         raise HTTPException(503,"Password recovery email is not configured")
     generic={"message":"If this account exists, recovery instructions will be sent."}
@@ -38,14 +39,14 @@ def request_reset(data:RequestReset,s:Session=Depends(m.db)):
     token=secrets.token_urlsafe(40)
     item=PasswordReset(user_id=user.id,token_hash=hashlib.sha256(token.encode()).hexdigest(),
          expires_at=datetime.now(timezone.utc)+timedelta(minutes=20))
-    try:
-        mailer.send_email(user.email,"SchoolCare password reset",
-            "A password reset was requested for this SchoolCare account. "
-            "If this was not you, ignore this message.\n\n"
-            "Reset URL (expires in 20 minutes): "+
-            mailer.public_url("/#reset="+token)+"\n")
-    except Exception:
-        raise HTTPException(503,"Recovery email delivery is temporarily unavailable")
+    body=("A password reset was requested for this SchoolCare account. "
+          "If this was not you, ignore this message.\n\n"
+          "Reset URL (expires in 20 minutes): "+
+          mailer.public_url("/#reset="+token)+"\n")
+    from app.mail_outbox import send_or_queue
+    result=send_or_queue(s,user.email,"SchoolCare password reset",body)
+    if not result.get("sent") and result.get("queued") and "not configured" in (result.get("notice") or ""):
+        raise HTTPException(503,"Password recovery email is not configured")
     s.add(item);s.commit()
     return generic
 

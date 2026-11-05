@@ -73,8 +73,14 @@ label{font-weight:700;display:block;margin-bottom:6px;color:#2f5248}input,select
 input:focus,select:focus,textarea:focus{border-color:#7dd3c3;box-shadow:0 0 0 4px rgba(15,159,138,.12)}
 textarea{min-height:100px;resize:vertical}form{display:grid;gap:var(--space-sm)}.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px;flex-wrap:wrap}
 .grid2 form,.panel form.grid2{align-items:end}.panel form.grid2 > div{min-width:0}.panel form.grid2 > button{width:100%}
-.table-wrap{overflow:auto;margin:0;border-radius:12px}table{width:100%;border-collapse:collapse}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:normal;vertical-align:middle}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}
-th{font-size:12px;color:#5f7a71;background:#f3faf7;font-weight:700}tbody tr{transition:background .15s ease}tbody tr:hover{background:#f5fcf9}tbody tr:last-child td{border-bottom:0}
+.skip-link{position:absolute;left:12px;top:8px;z-index:40;padding:10px 14px;border-radius:12px;background:#12362e;color:#fff;font-weight:700;text-decoration:none;transform:translateY(-140%);transition:transform .15s ease}
+.skip-link:focus{transform:none;outline:3px solid var(--accent);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.table-wrap{overflow:auto;margin:0;border-radius:12px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;max-width:100%;box-shadow:inset 0 -1px 0 var(--line-soft)}
+.table-wrap:focus-within{outline:2px solid rgba(15,159,138,.35);outline-offset:2px}
+table{width:100%;border-collapse:collapse;min-width:520px}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line-soft);white-space:normal;vertical-align:middle}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}
+th{font-size:12px;color:#5f7a71;background:#f3faf7;font-weight:700;position:sticky;top:0;z-index:1}tbody tr{transition:background .15s ease}tbody tr:hover,tbody tr:focus-within{background:#f5fcf9}tbody tr:last-child td{border-bottom:0}
+caption.sr-only{caption-side:top}
 .linkbtn{padding:0;background:none;color:var(--primary-deep);text-decoration:underline;font-weight:700;min-height:auto;box-shadow:none}button.linkbtn:hover{transform:none;filter:none}
 .pill{border-radius:999px;background:var(--primary-soft);color:var(--primary-deep);padding:5px 10px;display:inline-block;font-size:12px;line-height:1.2;font-weight:700}
 .empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed #bfe3d7;border-radius:14px;margin:0;background:linear-gradient(180deg,#f7fffb,#ffffff)}
@@ -95,10 +101,11 @@ th{font-size:12px;color:#5f7a71;background:#f3faf7;font-weight:700}tbody tr{tran
 #app-shell[hidden],#login-screen[hidden]{display:none!important}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 @media(max-width:850px){#menu-toggle{display:inline-flex}.shell{grid-template-columns:1fr}aside{display:none;position:fixed;top:var(--header-h);left:0;bottom:0;width:min(300px,85vw);z-index:5;box-shadow:20px 0 30px rgba(18,54,46,.16);overflow-y:auto;overscroll-behavior:contain}aside.open{display:block}main{padding:18px 16px 24px}.grid2{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.cards:has(.metric:only-child){grid-template-columns:1fr}}
-@media(max-width:610px){.auth-grid{grid-template-columns:1fr}.cards,.cards:has(.metric:nth-child(2):last-child),.cards:has(.metric:only-child){grid-template-columns:1fr}header{padding:0 12px}#account small{display:none}main{padding:14px 12px 20px}.panel,.metric{padding:16px}h1{font-size:23px}th,td{padding:10px 8px}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}.result{white-space:normal}}
+@media(max-width:610px){.auth-grid{grid-template-columns:1fr}.cards,.cards:has(.metric:nth-child(2):last-child),.cards:has(.metric:only-child){grid-template-columns:1fr}header{padding:0 12px}#account small{display:none}main{padding:14px 12px 20px}.panel,.metric{padding:16px}h1{font-size:23px}table{min-width:420px}th,td{padding:10px 8px}th:first-child,td:first-child{padding-left:0}th:last-child,td:last-child{padding-right:0}.result{white-space:normal}}
 @media(max-width:610px){:root{--header-h:66px;--card-pad:16px}#global-search{display:none}#account small{display:none}.brand{font-size:18px}.header-tools{gap:8px}header #logout,header .secondary{padding:0 12px;height:36px;min-height:36px}#account{height:36px}}
 </style></head><body>
-<header><div class="header-left"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation">☰</button><div class="brand">School<span>Care</span><small>/ for schools</small></div></div><div class="header-tools"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." hidden><div id="account"></div></div></header>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header><div class="header-left"><button id="menu-toggle" class="secondary" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">☰</button><div class="brand">School<span>Care</span><small>/ for schools</small></div></div><div class="header-tools"><input id="global-search" type="search" aria-label="Search learners from anywhere" placeholder="Find learner..." hidden><div id="account"></div></div></header>
 <section id="login-screen"><div class="auth-grid">
 <div class="panel"><h2>Welcome back</h2><p class="subtle">Sign in to your school's caring workspace.</p><p class="notice">Local demo login tip<br>School identifier: <strong>demo</strong><br>Email: <strong>admin@demo.local</strong><br>Use the password configured in your local environment.</p><form id="login"><div><label for="school-slug">School identifier</label><input id="school-slug" name="school_slug" required placeholder="demo"></div><div><label for="login-email">Email</label><input id="login-email" name="email" type="email" autocomplete="username" required placeholder="admin@demo.local"></div><div><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div><button>Sign in</button></form><div class="auth-links"><button type="button" class="secondary" data-action="accept-invitation">Accept a staff invitation</button><button type="button" class="secondary" data-action="request-reset">Forgot password?</button></div></div>
 <div class="panel"><h2>Start a school workspace</h2><p class="subtle">Create a fresh space for learner support — fictional demo records only.</p><form id="register"><div><label for="school-name">School name</label><input id="school-name" name="school_name" required></div><div><label for="new-slug">School identifier</label><input id="new-slug" name="slug" required minlength="3" maxlength="40" title="3–40 lowercase letters, numbers, or hyphens" placeholder="example-school" autocomplete="off"></div><div><label for="reg-email">Administrator email</label><input id="reg-email" name="email" type="email" required></div><div><label for="reg-password">Password (12+ characters)</label><input id="reg-password" name="password" type="password" minlength="12" required></div><button>Create workspace</button></form></div>
@@ -130,7 +137,13 @@ const choices=(arr,key="id",label="name")=>arr.map(x=>[x[key],x[label]]);
 const btn=(name,action,id="",secondary=true)=>'<button type="button" class="'+(secondary?"secondary":"")+'" data-action="'+esc(action)+'" data-id="'+esc(id)+'">'+esc(name)+'</button>';
 const head=(title,desc,buttons="")=>'<div class="toolbar"><div><h1>'+esc(title)+'</h1><p class="subheading subtle">'+esc(desc)+'</p></div><div class="actions">'+buttons+'</div></div>';
 const panel=(body,title="")=>'<div class="panel">'+(title?'<h2>'+esc(title)+'</h2>':"")+body+'</div>';
-const table=(cols,rows)=>rows.length?'<div class="table-wrap"><table><thead><tr>'+cols.map(x=>'<th>'+esc(x)+'</th>').join("")+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(cell=>'<td>'+cell+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty">No records found. Add a record or change the search.</div>';
+const table=(cols,rows,caption)=>{
+ if(!rows.length)return '<div class="empty" role="status">No records found. Add a record or change the search.</div>';
+ const cap=caption?'<caption class="sr-only">'+esc(caption)+'</caption>':'';
+ return '<div class="table-wrap" tabindex="0" role="region" aria-label="'+(caption?esc(caption):"Data table")+'"><table>'+cap+'<thead><tr>'+
+  cols.map(x=>'<th scope="col">'+esc(x)+'</th>').join("")+'</tr></thead><tbody>'+
+  rows.map(r=>'<tr>'+r.map(cell=>'<td>'+cell+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>';
+};
 const bars=obj=>{const entries=Object.entries(obj);if(!entries.length)return '<div class="empty">No data yet</div>';const max=Math.max(1,...entries.map(x=>Number(x[1])));return '<div class="stack">'+entries.map(x=>'<div class="stack" style="gap:6px"><div class="bar-row"><span>'+esc(x[0])+'</span><strong>'+esc(x[1])+'</strong></div><div class="bar-track"><div class="bar-fill" style="width:'+Math.round(Number(x[1])/max*100)+'%"></div></div></div>').join("")+'</div>'};
 const plain=x=>esc(x), pill=x=>'<span class="pill">'+esc(x)+'</span>';
 const link=(text,page,id)=>'<button class="linkbtn" type="button" data-go="'+esc(page)+(id?"/"+esc(id):"")+'">'+esc(text)+'</button>';
@@ -151,9 +164,13 @@ function close(){if(unsaved&&!confirm("Discard unsaved changes?"))return;$("dial
 function path(){return decodeURIComponent(location.hash.replace(/^#\/?/,""))||"dashboard"}
 function navigate(value){if(unsaved&&!confirm("Discard unsaved form changes?"))return;unsaved=false;location.hash="#/"+value;render()}
 function navigation(){
- $("nav").innerHTML=groups.map(g=>{const items=g[1].filter(x=>can(x[0]));return items.length?'<div class="nav-group">'+esc(g[0])+'</div>'+items.map(x=>'<button class="nav-btn" data-go="'+esc(x[0])+'">'+esc(x[1])+'</button>').join(""):""}).join("");
- document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",path().split("/")[0]===b.dataset.go));
+ const current=path().split("/")[0];
+ $("nav").innerHTML=groups.map(g=>{const items=g[1].filter(x=>can(x[0]));return items.length?'<div class="nav-group" role="presentation">'+esc(g[0])+'</div>'+items.map(x=>{
+  const on=current===x[0];
+  return '<button type="button" class="nav-btn'+(on?" active":"")+'" data-go="'+esc(x[0])+'" aria-current="'+(on?"page":"false")+'">'+esc(x[1])+'</button>';
+ }).join(""):""}).join("");
  $("sidebar").classList.remove("open");
+ const toggle=$("menu-toggle");if(toggle)toggle.setAttribute("aria-expanded","false");
 }
 function selectRows(data,keys){return data.map(x=>keys.map(k=>plain(x[k])))}
 function filterTable(data,search,fields){const term=search.toLowerCase().trim();return data.filter(x=>fields.some(f=>String(x[f]??"").toLowerCase().includes(term)))}
@@ -461,7 +478,10 @@ async function reports(filters={}){
  $("clear-reports").onclick=()=>reports({});
 }
 async function settings(){
- const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);$("page").innerHTML=head("School settings","Configure progressive-discipline reviews — never automatic sanctions")+
+ const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);
+ let outbox={items:[],notice:""};
+ try{outbox=await api("mail/outbox")}catch(e){outbox={items:[],notice:e.message}}
+ $("page").innerHTML=head("School settings","Configure progressive-discipline reviews — never automatic sanctions")+
  panel(jsonForm("settings",
   input("repeat_window_days","Repeat look-back window (days)","number",d.repeat_window_days,'min="7" max="365" required')+
   input("repeat_similar_threshold","Similar-behaviour review threshold","number",d.repeat_similar_threshold,'min="1" max="20" required')+
@@ -472,7 +492,13 @@ async function settings(){
   input("admission_prefix","Admission prefix","text",d.admission_prefix,'required maxlength="12"')+
   '<input type="hidden" name="repeat_threshold" value="'+esc(d.repeat_similar_threshold)+'">'
  ),"Behaviour review engine")+
- panel(jsonForm("academic",input("academic_year","Academic year","number",acad.academic_year,'min="2020" max="2100" required')+input("term","Current term (1–4)","number",acad.term,'min="1" max="4" required')+input("school_contact_email","School contact email","email",acad.school_contact_email)),"Academic year and school contact");
+ panel(jsonForm("academic",input("academic_year","Academic year","number",acad.academic_year,'min="2020" max="2100" required')+input("term","Current term (1–4)","number",acad.term,'min="1" max="4" required')+input("school_contact_email","School contact email","email",acad.school_contact_email)),"Academic year and school contact")+
+ panel('<p class="subtle">'+esc(outbox.notice||"Queued and failed school emails appear here.")+'</p>'+
+  btn("Retry pending emails","retry-mail-outbox","",false)+
+  table(["When","To","Subject","Status","Attempts","Last error"],(outbox.items||[]).slice(0,40).map(x=>[
+   plain((x.created_at||"").slice(0,19)),plain(x.destination),plain(x.subject),pill(x.status),
+   plain(x.attempts||0),plain(x.last_error||"—")
+  ]),"Email outbox"),"Email delivery outbox");
 }
 async function subscription(){
  const d=await api("subscription");$("page").innerHTML=head("Subscription","Account status and billing availability")+
@@ -757,6 +783,10 @@ async function openAction(action,id){
   const a=document.createElement("a");a.href=url;a.download="letter-"+id+".pdf";document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),60000);toast("PDF download started");return;}
  case "deliver-letter":name="Deliver approved letter";kind="letter-deliver:"+id;body=input("email","Guardian email","email","","required")+options("channel","Channel",[["email","Email"],["hand","Hand delivery"]]);break;
+ case "retry-mail-outbox":{
+  const r=await api("mail/outbox/retry","POST",{limit:20});
+  toast(r.notice||("Retried "+(r.processed||0)+" message(s)"));
+  navigate("settings");return;}
  case "mark-onboarding":await api("onboarding/steps","POST",{step_id:id,completed:true,notes:"Marked complete in school setup"});toast("Onboarding step marked complete");navigate("onboarding");return;
  case "resend-parent-notice":{
   const r=await api("parent-portal/notices/"+id+"/resend","POST",{});
@@ -1013,10 +1043,29 @@ document.addEventListener("click",async e=>{
  }
  if(e.target.id==="logout"){try{await api("logout","POST");location.reload()}catch(err){toast(err.message,true)}}
  if(e.target.id==="close-dialog")close();
- if(e.target.id==="menu-toggle")$("sidebar").classList.toggle("open");
+ if(e.target.id==="menu-toggle"){
+  const side=$("sidebar");side.classList.toggle("open");
+  e.target.setAttribute("aria-expanded",side.classList.contains("open")?"true":"false");
+ }
 });
 document.addEventListener("input",e=>{if(e.target.closest("#dialog form")||e.target.closest('[data-form="settings"]')||e.target.closest('[data-form="academic"]'))unsaved=true});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("dialog").classList.contains("open"))close();if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}});
+document.addEventListener("keydown",e=>{
+ if(e.key==="Escape"){
+  if($("dialog").classList.contains("open")){close();return}
+  const side=$("sidebar");const toggle=$("menu-toggle");
+  if(side&&side.classList.contains("open")){side.classList.remove("open");if(toggle)toggle.setAttribute("aria-expanded","false");return}
+ }
+ if(e.key==="Tab"&&$("dialog").classList.contains("open")){
+  const modal=$("dialog").querySelector(".modal");if(!modal)return;
+  const focusable=[...modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+   .filter(el=>!el.disabled&&el.offsetParent!==null);
+  if(!focusable.length)return;
+  const first=focusable[0],last=focusable[focusable.length-1];
+  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}
+  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
+ }
+ if(e.key==="Enter"&&e.target.id==="global-search"){e.preventDefault();directoryState.q=e.target.value;directoryState.offset=0;navigate("learners")}
+});
 window.addEventListener("beforeunload",e=>{if(unsaved){e.preventDefault();e.returnValue=""}});
 window.addEventListener("hashchange",()=>render());
 (async()=>{if(location.hash.startsWith("#reset=")){const token=location.hash.slice(7);try{await openAction("complete-reset",token)}catch(e){toast(e.message,true)}return}if(location.hash.startsWith("#parent=")){const token=location.hash.slice(8);try{await openAction("parent-ack",token)}catch(e){toast(e.message,true)}return}try{user=await api("me");if(!user.authenticated)return;$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';render();schoolSelector()}catch{}})();

@@ -88,7 +88,8 @@ def test_onboarding_letters_parent_delivery_and_incident_close():
         delivered = send(f"/api/letter-documents/{lid}/deliver", {
             "email": "guardian@example.test", "channel": "email"})
         assert delivered.status_code == 200, delivered.text
-        assert delivered.json().get("manual") is True or delivered.json()["status"] in ("approved", "delivered")
+        assert delivered.json().get("manual") is True or delivered.json().get("queued") is True \
+            or delivered.json()["status"] in ("approved", "delivered", "queued")
 
         # Parent notice delivery tracking + resend
         invite = send("/api/parent-portal/invite", {
@@ -96,7 +97,7 @@ def test_onboarding_letters_parent_delivery_and_incident_close():
             "subject": "Meeting request"})
         assert invite.status_code == 201, invite.text
         inv = invite.json()
-        assert inv["delivery_status"] in ("manual", "emailed")
+        assert inv["delivery_status"] in ("manual", "emailed", "queued")
         assert inv["delivery_attempts"] == 1
         notices = c.get("/api/parent-portal/notices").json()
         assert notices[0]["delivery_attempts"] >= 1

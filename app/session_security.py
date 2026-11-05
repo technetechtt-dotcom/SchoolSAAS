@@ -178,23 +178,27 @@ def list_invitations(s: Session = Depends(m.db), ctx=Depends(m.require(*ADMIN)))
     return out
 
 
-def _deliver_staff_invite(invite: m.StaffInvite, token: str, school_name: str) -> tuple[bool, str]:
+def _deliver_staff_invite(invite: m.StaffInvite, token: str, school_name: str, s: Session | None = None) -> tuple[bool, str]:
     invite.delivery_attempts = int(getattr(invite, "delivery_attempts", 0) or 0) + 1
     if hasattr(invite, "last_delivery_at"):
         invite.last_delivery_at = datetime.now(timezone.utc)
+    body = (f"You have been invited to join {school_name} as {invite.role}.\n\n"
+            f"Accept in the app with this invitation token (expires in 72 hours):\n{token}\n\n"
+            f"Open: {mailer.public_url()}\n")
     if mailer.smtp_ready():
         try:
-            mailer.send_email(invite.email, "SchoolCare staff invitation",
-                              f"You have been invited to join {school_name} as {invite.role}.\n\n"
-                              f"Accept in the app with this invitation token (expires in 72 hours):\n{token}\n\n"
-                              f"Open: {mailer.public_url()}\n")
+            mailer.send_email(invite.email, "SchoolCare staff invitation", body)
             if hasattr(invite, "delivery_status"):
                 invite.delivery_status = "emailed"
             return True, "Invitation emailed"
         except Exception as exc:
+            if s is not None:
+                from app.mail_outbox import enqueue_email
+                enqueue_email(s, invite.email, "SchoolCare staff invitation", body,
+                              school_id=invite.school_id, status="failed", last_error=str(exc))
             if hasattr(invite, "delivery_status"):
-                invite.delivery_status = "failed"
-            return False, f"SMTP delivery failed: {exc}"
+                invite.delivery_status = "queued"
+            return False, f"SMTP failed — queued for retry; share token privately ({exc})"
     if hasattr(invite, "delivery_status"):
         invite.delivery_status = "manual"
     return False, "SMTP not configured; share this token privately"
@@ -213,10 +217,7 @@ def resend_invitation(invite_id: int, s: Session = Depends(m.db), ctx=Depends(m.
         raise HTTPException(409, "Invitation expired — create a new invite")
     token = secrets.token_urlsafe(32)
     inv.token_hash = hashlib.sha256(token.encode()).hexdigest()
-    emailed, notes = _deliver_staff_invite(inv, token, ctx["school"])
-    if getattr(inv, "delivery_status", "") == "failed":
-        m.log(s, ctx, "resend_failed", "staff_invite", inv.id); s.commit()
-        raise HTTPException(503, "Invitation email delivery failed")
+    emailed, notes = _deliver_staff_invite(inv, token, ctx["school"], s)
     m.log(s, ctx, "resend", "staff_invite", inv.id); s.commit()
     out = {"id": inv.id, "emailed": emailed, "notice": notes,
            "delivery_status": getattr(inv, "delivery_status", ""),

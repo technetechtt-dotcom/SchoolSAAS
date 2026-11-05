@@ -192,15 +192,23 @@ def deliver_letter(letter_id: int, data: LetterDeliverIn, s: Session = Depends(m
             item.status = "delivered"
             item.delivery_notes = "Emailed via SMTP"
         except Exception as exc:
-            item.status = "failed"
-            item.delivery_notes = f"SMTP delivery failed: {exc}"
-            m.log(s, ctx, "deliver_failed", "letter_document", item.id); s.commit()
-            raise HTTPException(503, "Letter email delivery failed")
+            from app.mail_outbox import enqueue_email
+            enqueue_email(s, email, item.title, item.body, school_id=ctx["sid"],
+                          status="failed", last_error=str(exc))
+            item.status = "queued"
+            item.delivery_notes = f"SMTP failed — queued for retry ({exc})"
+            m.log(s, ctx, "deliver_queued", "letter_document", item.id); s.commit()
+            return {"id": item.id, "status": item.status, "notice": item.delivery_notes,
+                    "manual": False, "queued": True}
     else:
-        item.status = "approved"
-        item.delivery_notes = "SMTP not configured — mark for manual hand delivery"
-        m.log(s, ctx, "deliver_manual", "letter_document", item.id); s.commit()
-        return {"id": item.id, "status": item.status, "notice": item.delivery_notes, "manual": True}
+        from app.mail_outbox import enqueue_email
+        enqueue_email(s, email, item.title, item.body, school_id=ctx["sid"],
+                      status="pending", last_error="SMTP not configured")
+        item.status = "queued"
+        item.delivery_notes = "SMTP not configured — queued for later delivery; also mark for manual hand delivery if urgent"
+        m.log(s, ctx, "deliver_queued", "letter_document", item.id); s.commit()
+        return {"id": item.id, "status": item.status, "notice": item.delivery_notes,
+                "manual": True, "queued": True}
     item.updated_at = datetime.now(timezone.utc)
     m.log(s, ctx, "deliver", "letter_document", item.id); s.commit()
     return {"id": item.id, "status": item.status, "manual": False}

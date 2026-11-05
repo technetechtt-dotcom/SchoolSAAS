@@ -297,6 +297,7 @@ def startup():
         import app.letter_workflow  # noqa: F401
         import app.account_security  # noqa: F401
         import app.directory_ops  # noqa: F401
+        import app.mail_outbox  # noqa: F401
         Base.metadata.create_all(engine)
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
@@ -339,16 +340,35 @@ def login_identity(school_slug: str, email: str) -> str:
     raw = school_slug.strip().lower() + ':' + email.strip().lower()
     return hashlib.sha256(raw.encode()).hexdigest()
 
-def check_login_limit(session: Session, identifier: str):
+def client_ip(request: Request | None) -> str:
+    if request is None:
+        return "unknown"
+    if os.getenv("TRUST_PROXY", "false").lower() == "true":
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        if forwarded:
+            return forwarded[:80]
+    return (request.client.host if request.client else "unknown")[:80]
+
+def ip_identity(ip: str) -> str:
+    return hashlib.sha256(("ip:" + (ip or "unknown")).encode()).hexdigest()
+
+def check_login_limit(session: Session, identifier: str, limit: int = 5, window: str = "Too many attempts. Try again after 15 minutes."):
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
     count = session.scalar(select(func.count()).select_from(LoginFailure).where(
         LoginFailure.identity_hash == identifier, LoginFailure.created_at >= cutoff))
-    if count >= 5:
-        raise HTTPException(429, 'Too many attempts. Try again after 15 minutes.')
+    if count >= limit:
+        raise HTTPException(429, window)
 
 def failed_login(session: Session, identifier: str):
     session.add(LoginFailure(identity_hash=identifier))
     session.commit()
+
+def check_auth_rate_limits(session: Session, request: Request | None, identity: str | None = None):
+    """Identity lockout (5/15m) plus IP throttle (30/15m) for auth endpoints."""
+    if identity:
+        check_login_limit(session, identity)
+    check_login_limit(session, ip_identity(client_ip(request)), limit=30,
+                      window="Too many requests from this network. Try again after 15 minutes.")
 
 
 def current(request: Request, session: Session=Depends(db)):
@@ -489,6 +509,7 @@ def evaluate_repeat_flag(s:Session, school_id:int, learner_id:int, offence:Offen
 
 @app.post('/api/register',status_code=201)
 def register(data:Register, response:Response, request:Request, s:Session=Depends(db)):
+    check_auth_rate_limits(s, request)
     if s.scalar(select(School).where(School.slug==data.slug)): raise HTTPException(409,'School slug already used')
     if s.scalar(select(User).where(User.email==data.email.lower())): raise HTTPException(409,'Email already registered; contact support to join another school')
     school=School(name=data.school_name,slug=data.slug); user=User(email=data.email.lower(),password_hash=ph.hash(data.password))
@@ -501,16 +522,18 @@ def login(data:Login,response:Response,request:Request,s:Session=Depends(db)):
     slug = (data.school_slug or '').strip().lower()
     email = (data.email or '').strip().lower()
     identity = login_identity(slug, email)
-    check_login_limit(s, identity)
+    check_auth_rate_limits(s, request, identity)
     school=s.scalar(select(School).where(School.slug==slug))
     user=s.scalar(select(User).where(User.email==email))
     if not user or not school:
         failed_login(s, identity)
+        failed_login(s, ip_identity(client_ip(request)))
         raise HTTPException(401,'Invalid credentials')
     try:
         ph.verify(user.password_hash,data.password)
     except Exception:
         failed_login(s,identity)
+        failed_login(s, ip_identity(client_ip(request)))
         raise HTTPException(401,'Invalid credentials')
     mem=s.scalar(select(Membership).where(Membership.school_id==school.id,Membership.user_id==user.id))
     if not mem or not mem.active or not user.active or school.status!='active':
@@ -730,10 +753,7 @@ def invite(data:InviteRequest,s:Session=Depends(db),ctx=Depends(require('school_
         delivery_status='pending', delivery_attempts=0)
     s.add(i);s.flush();log(s,ctx,'invite','staff_invite',i.id)
     from app.session_security import _deliver_staff_invite
-    emailed, notes = _deliver_staff_invite(i, token, ctx['school'])
-    if i.delivery_status == 'failed':
-        s.commit()
-        raise HTTPException(503,'Invitation email delivery failed')
+    emailed, notes = _deliver_staff_invite(i, token, ctx['school'], s)
     s.commit()
     out={'id':i.id,'expires_in_hours':72,'emailed':emailed,'delivery_status':i.delivery_status,
          'delivery_attempts':i.delivery_attempts}
@@ -945,6 +965,8 @@ from app.learner_activity import router as learner_activity_router
 app.include_router(learner_activity_router)
 from app.directory_ops import router as directory_ops_router
 app.include_router(directory_ops_router)
+from app.mail_outbox import router as mail_outbox_router
+app.include_router(mail_outbox_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 
