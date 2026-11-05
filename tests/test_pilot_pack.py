@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 os.environ["JWT_SECRET"] = "pilot-pack-test-secret-key-32chars"
 os.environ["SCHEMA_AUTO_CREATE"] = "true"
+os.environ["MFA_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 os.environ["PLATFORM_ADMIN_EMAILS"] = "admin@school.test"
 os.environ.pop("SMTP_HOST", None)
 
