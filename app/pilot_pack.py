@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import hashlib, os, secrets
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Response, Header
 from pydantic import BaseModel, Field
 from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Integer, UniqueConstraint, select, func
 from sqlalchemy.orm import Session, Mapped, mapped_column
@@ -100,6 +100,46 @@ class Invoice(m.Base):
     currency: Mapped[str] = mapped_column(String(8), default="ZAR")
     status: Mapped[str] = mapped_column(String(30), default="draft")
     description: Mapped[str] = mapped_column(String(200), default="SchoolCare subscription")
+    gateway: Mapped[str] = mapped_column(String(40), default="none")
+    payment_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class EvidenceAccessLog(m.Base):
+    __tablename__ = "evidence_access_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
+    evidence_id: Mapped[int] = mapped_column(ForeignKey("evidence_files.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(40), default="download")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class ParentDispute(m.Base):
+    __tablename__ = "parent_disputes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
+    learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"), index=True)
+    access_id: Mapped[int | None] = mapped_column(ForeignKey("parent_access_tokens.id"), nullable=True)
+    email: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="open")
+    resolution_notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PaymentEvent(m.Base):
+    __tablename__ = "payment_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    event_type: Mapped[str] = mapped_column(String(60))
+    external_ref: Mapped[str] = mapped_column(String(120))
+    payload: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -129,6 +169,29 @@ def platform_user(s: Session, ctx: dict):
     if not user or user.email not in platform_admins():
         raise HTTPException(403, "Platform administrator access required")
     return user
+
+
+def billing_gateway_status() -> dict:
+    provider = (os.getenv("BILLING_GATEWAY") or "none").strip().lower()
+    secret = (os.getenv("BILLING_WEBHOOK_SECRET") or "").strip()
+    connected = provider == "sandbox" and bool(secret)
+    return {
+        "provider": provider if provider != "none" else None,
+        "connected": connected,
+        "message": (
+            "Sandbox gateway accepts checkout + signed webhook confirmation only."
+            if connected else
+            "Set BILLING_GATEWAY=sandbox and BILLING_WEBHOOK_SECRET to enable payment confirmation."
+        ),
+    }
+
+
+def _parent_access_from_token(s: Session, token: str) -> ParentAccess:
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    access = s.scalar(select(ParentAccess).where(ParentAccess.token_hash == digest))
+    if not access or access.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+        raise HTTPException(400, "Parent access token invalid or expired")
+    return access
 
 
 def issue_mfa_pending(uid: int, school_id: int) -> str:
@@ -195,9 +258,25 @@ class ParentAckIn(BaseModel):
     subject: str = Field(min_length=3, max_length=200)
 
 
+class ParentDisputeIn(BaseModel):
+    token: str
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+class DisputeResolveIn(BaseModel):
+    status: str = Field(min_length=2, max_length=30)
+    resolution_notes: str = Field(default="", max_length=4000)
+
+
 class InvoiceIn(BaseModel):
     amount_cents: int = Field(ge=100)
     description: str = Field(default="SchoolCare subscription", max_length=200)
+
+
+class SandboxWebhookIn(BaseModel):
+    invoice_id: int
+    event: str = Field(default="payment.succeeded", max_length=60)
+    external_ref: str | None = Field(default=None, max_length=120)
 
 
 class RetentionIn(BaseModel):
@@ -426,6 +505,50 @@ def list_evidence(incident_id: int | None = None, case_id: int | None = None,
              "created_at": x.created_at.isoformat()} for x in rows]
 
 
+def _evidence_for_viewer(s: Session, evidence_id: int, ctx: dict) -> EvidenceFile:
+    item = s.scalar(select(EvidenceFile).where(EvidenceFile.id == evidence_id, EvidenceFile.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Evidence not found")
+    if ctx["role"] == "educator":
+        if not item.incident_id:
+            raise HTTPException(403, "Educators may only access evidence on their own incidents")
+        incident = s.scalar(select(m.Incident).where(
+            m.Incident.id == item.incident_id, m.Incident.school_id == ctx["sid"],
+            m.Incident.reporter_id == ctx["uid"]))
+        if not incident:
+            raise HTTPException(403, "Not authorised to access this evidence")
+    return item
+
+
+@router.get("/evidence/{evidence_id}/download")
+def download_evidence(evidence_id: int, disposition: str = "attachment",
+                      s: Session = Depends(m.db),
+                      ctx=Depends(m.require("school_admin", "principal", "smt", "hod", "educator"))):
+    item = _evidence_for_viewer(s, evidence_id, ctx)
+    path = UPLOAD_ROOT / str(item.school_id) / item.stored_name
+    if not path.is_file():
+        raise HTTPException(404, "Evidence file missing from storage")
+    action = "view" if disposition == "inline" else "download"
+    s.add(EvidenceAccessLog(school_id=ctx["sid"], evidence_id=item.id, user_id=ctx["uid"], action=action))
+    m.log(s, ctx, action, "evidence", item.id)
+    s.commit()
+    from fastapi.responses import FileResponse
+    headers = {"Content-Disposition": f'{disposition}; filename="{item.filename}"'}
+    return FileResponse(path, media_type=item.content_type or "application/octet-stream", headers=headers)
+
+
+@router.get("/evidence/{evidence_id}/access-log")
+def evidence_access_log(evidence_id: int, s: Session = Depends(m.db),
+                        ctx=Depends(m.require("school_admin", "principal", "smt"))):
+    item = s.scalar(select(EvidenceFile).where(EvidenceFile.id == evidence_id, EvidenceFile.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Evidence not found")
+    rows = s.scalars(select(EvidenceAccessLog).where(
+        EvidenceAccessLog.school_id == ctx["sid"], EvidenceAccessLog.evidence_id == evidence_id
+    ).order_by(EvidenceAccessLog.id.desc()).limit(100)).all()
+    return [{"id": x.id, "user_id": x.user_id, "action": x.action, "created_at": x.created_at.isoformat()} for x in rows]
+
+
 # --- Letter templates -------------------------------------------------------
 @router.get("/letter-templates")
 def list_templates(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
@@ -465,41 +588,124 @@ def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
     learner = s.scalar(select(m.Learner).where(m.Learner.id == data.learner_id, m.Learner.school_id == ctx["sid"]))
     if not learner:
         raise HTTPException(404, "Learner not found")
+    subject = data.subject.strip() or "SchoolCare notice"
     token = secrets.token_urlsafe(32)
     item = ParentAccess(school_id=ctx["sid"], learner_id=data.learner_id, email=data.email.lower(),
-                        subject=data.subject, token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                        subject=subject, token_hash=hashlib.sha256(token.encode()).hexdigest(),
                         expires_at=datetime.now(timezone.utc) + timedelta(days=7))
     s.add(item); s.flush()
     link = mailer.public_url(f"/#parent={token}")
     emailed = False
     if mailer.smtp_ready():
         try:
-            mailer.send_email(data.email.lower(), data.subject,
+            mailer.send_email(data.email.lower(), subject,
                               f"You have been invited to acknowledge a SchoolCare notice for {learner.first_name}.\n\n"
                               f"Open this private link (expires in 7 days):\n{link}\n")
             emailed = True
         except Exception:
             raise HTTPException(503, "Parent invite email delivery failed")
     m.log(s, ctx, "invite", "parent_access", item.id); s.commit()
-    out = {"id": item.id, "emailed": emailed, "expires_in_hours": 168}
+    out = {"id": item.id, "emailed": emailed, "expires_in_hours": 168, "subject": subject}
     if not emailed:
         out["token"] = token
-        out["notice"] = "SMTP not configured; share this token privately."
+        out["notice"] = "SMTP not configured; share this private link/token with the guardian only."
+    else:
+        out["notice"] = "Parent invitation emailed."
     return out
+
+
+@router.get("/parent-portal/notice")
+def parent_notice(token: str, s: Session = Depends(m.db)):
+    """Public lookup so acknowledgement UI binds to the issued subject (not a forgeable default)."""
+    access = _parent_access_from_token(s, token)
+    if access.used:
+        raise HTTPException(400, "This notice has already been acknowledged")
+    learner = s.get(m.Learner, access.learner_id)
+    school = s.get(m.School, access.school_id)
+    return {
+        "subject": access.subject,
+        "learner_name": f"{learner.first_name} {learner.surname}" if learner else "",
+        "school_name": school.name if school else "",
+        "email": access.email,
+        "expires_at": access.expires_at.isoformat(),
+        "can_dispute": True,
+    }
 
 
 @router.post("/parent-portal/acknowledge")
 def parent_ack(data: ParentAckIn, s: Session = Depends(m.db)):
-    digest = hashlib.sha256(data.token.encode()).hexdigest()
-    access = s.scalar(select(ParentAccess).where(ParentAccess.token_hash == digest))
-    if not access or access.used or access.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+    access = _parent_access_from_token(s, data.token)
+    if access.used:
         raise HTTPException(400, "Parent access token invalid or expired")
-    if data.subject.strip() != access.subject:
+    if data.subject.strip() != access.subject.strip():
         raise HTTPException(400, "Acknowledgement subject must match the issued school notice")
     access.used = True
     ack = ParentAck(school_id=access.school_id, learner_id=access.learner_id, subject=access.subject, email=access.email)
     s.add(ack); s.commit()
     return {"ok": True, "acknowledged": True}
+
+
+@router.post("/parent-portal/dispute", status_code=201)
+def parent_dispute(data: ParentDisputeIn, s: Session = Depends(m.db)):
+    access = _parent_access_from_token(s, data.token)
+    existing = s.scalar(select(ParentDispute).where(
+        ParentDispute.school_id == access.school_id, ParentDispute.access_id == access.id,
+        ParentDispute.status == "open"))
+    if existing:
+        raise HTTPException(409, "An open dispute already exists for this notice")
+    item = ParentDispute(
+        school_id=access.school_id, learner_id=access.learner_id, access_id=access.id,
+        email=access.email, subject=access.subject, reason=data.reason.strip(), status="open")
+    s.add(item); s.flush(); s.commit()
+    return {"id": item.id, "status": item.status}
+
+
+@router.get("/parent-portal/notices")
+def list_parent_notices(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    now = datetime.now(timezone.utc)
+    rows = s.scalars(select(ParentAccess).where(ParentAccess.school_id == ctx["sid"])
+                     .order_by(ParentAccess.id.desc()).limit(200)).all()
+    out = []
+    for x in rows:
+        exp = x.expires_at.replace(tzinfo=timezone.utc) if x.expires_at.tzinfo is None else x.expires_at
+        if x.used:
+            status = "acknowledged"
+        elif exp <= now:
+            status = "expired"
+        else:
+            status = "pending"
+        out.append({
+            "id": x.id, "learner_id": x.learner_id, "email": x.email, "subject": x.subject,
+            "status": status, "delivery": "email" if mailer.smtp_ready() else "manual_token",
+            "expires_at": x.expires_at.isoformat(),
+            "created_at": (x.expires_at - timedelta(days=7)).isoformat(),
+        })
+    return out
+
+
+@router.get("/parent-portal/disputes")
+def list_disputes(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    rows = s.scalars(select(ParentDispute).where(ParentDispute.school_id == ctx["sid"])
+                     .order_by(ParentDispute.id.desc()).limit(200)).all()
+    return [{"id": x.id, "learner_id": x.learner_id, "email": x.email, "subject": x.subject,
+             "reason": x.reason, "status": x.status, "resolution_notes": x.resolution_notes,
+             "created_at": x.created_at.isoformat(),
+             "resolved_at": x.resolved_at.isoformat() if x.resolved_at else None} for x in rows]
+
+
+@router.patch("/parent-portal/disputes/{dispute_id}")
+def resolve_dispute(dispute_id: int, data: DisputeResolveIn, s: Session = Depends(m.db),
+                    ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    item = s.scalar(select(ParentDispute).where(ParentDispute.id == dispute_id, ParentDispute.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Dispute not found")
+    if data.status not in {"resolved", "upheld", "rejected"}:
+        raise HTTPException(400, "Invalid dispute resolution status")
+    item.status = data.status
+    item.resolution_notes = data.resolution_notes.strip()
+    item.resolved_at = datetime.now(timezone.utc)
+    m.log(s, ctx, "resolve", "parent_dispute", item.id); s.commit()
+    return {"id": item.id, "status": item.status}
 
 
 @router.get("/parent-acknowledgements")
@@ -509,20 +715,98 @@ def list_acks(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", 
              "acknowledged_at": x.acknowledged_at.isoformat()} for x in rows]
 
 
-# --- Billing stubs ----------------------------------------------------------
+# --- Billing ----------------------------------------------------------------
+@router.get("/billing/gateway")
+def billing_gateway(ctx=Depends(m.require("school_admin", "principal"))):
+    return billing_gateway_status()
+
+
 @router.get("/billing/invoices")
 def list_invoices(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal"))):
+    gw = billing_gateway_status()
     rows = s.scalars(select(Invoice).where(Invoice.school_id == ctx["sid"]).order_by(Invoice.id.desc())).all()
     return [{"id": x.id, "amount_cents": x.amount_cents, "currency": x.currency, "status": x.status,
              "description": x.description, "created_at": x.created_at.isoformat(),
-             "gateway": "not_connected"} for x in rows]
+             "gateway": getattr(x, "gateway", None) or ("sandbox" if gw["connected"] else "not_connected"),
+             "payment_ref": getattr(x, "payment_ref", None),
+             "paid_at": x.paid_at.isoformat() if getattr(x, "paid_at", None) else None} for x in rows]
 
 
 @router.post("/billing/invoices", status_code=201)
 def create_invoice(data: InvoiceIn, s: Session = Depends(m.db), ctx=Depends(m.require("school_admin"))):
-    item = Invoice(school_id=ctx["sid"], amount_cents=data.amount_cents, description=data.description, status="issued")
+    gw = billing_gateway_status()
+    item = Invoice(school_id=ctx["sid"], amount_cents=data.amount_cents, description=data.description,
+                   status="issued", gateway="sandbox" if gw["connected"] else "none")
     s.add(item); s.flush(); m.log(s, ctx, "create", "invoice", item.id); s.commit()
-    return {"id": item.id, "status": item.status, "message": "Invoice recorded locally; no payment gateway is connected"}
+    msg = ("Invoice issued. Start checkout to obtain a payment reference; confirmation requires a signed webhook."
+           if gw["connected"] else
+           "Invoice recorded locally; connect BILLING_GATEWAY=sandbox to enable payment confirmation.")
+    return {"id": item.id, "status": item.status, "gateway": item.gateway, "message": msg}
+
+
+@router.post("/billing/invoices/{invoice_id}/checkout")
+def start_checkout(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal"))):
+    gw = billing_gateway_status()
+    if not gw["connected"]:
+        raise HTTPException(503, "Payment gateway is not connected")
+    item = s.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Invoice not found")
+    if item.status not in {"issued", "awaiting_payment"}:
+        raise HTTPException(409, "Invoice is not open for checkout")
+    ref = item.payment_ref or f"sandbox_{item.id}_{secrets.token_hex(6)}"
+    item.payment_ref = ref
+    item.gateway = "sandbox"
+    item.status = "awaiting_payment"
+    m.log(s, ctx, "checkout", "invoice", item.id); s.commit()
+    return {
+        "id": item.id, "status": item.status, "payment_ref": ref, "provider": "sandbox",
+        "message": "Checkout created. Payment is confirmed only by signed sandbox webhook — not by staff claim.",
+    }
+
+
+@router.post("/billing/webhooks/sandbox")
+def sandbox_webhook(data: SandboxWebhookIn, s: Session = Depends(m.db),
+                    x_billing_webhook_secret: str | None = Header(default=None),
+                    ctx=Depends(m.current)):
+    """Confirm payment via gateway secret or platform operator. Staff cannot self-claim payment."""
+    gw = billing_gateway_status()
+    if not gw["connected"]:
+        raise HTTPException(503, "Sandbox gateway is not configured")
+    secret = (os.getenv("BILLING_WEBHOOK_SECRET") or "").strip()
+    authorised = bool(secret and x_billing_webhook_secret and secrets.compare_digest(x_billing_webhook_secret, secret))
+    if not authorised:
+        try:
+            platform_user(s, ctx)
+            authorised = True
+        except HTTPException:
+            authorised = False
+    if not authorised:
+        raise HTTPException(403, "Sandbox webhook requires X-Billing-Webhook-Secret or platform administrator")
+    item = s.get(Invoice, data.invoice_id)
+    if not item:
+        raise HTTPException(404, "Invoice not found")
+    if item.status in {"paid", "paid_gateway"}:
+        return {"id": item.id, "status": item.status, "message": "Already reconciled", "subscription_activated": False}
+    if data.event != "payment.succeeded":
+        raise HTTPException(400, "Unsupported sandbox event")
+    external = data.external_ref or item.payment_ref or f"sandbox_evt_{secrets.token_hex(8)}"
+    item.status = "paid_gateway"
+    item.gateway = "sandbox"
+    item.payment_ref = external
+    item.paid_at = datetime.now(timezone.utc)
+    s.add(PaymentEvent(school_id=item.school_id, invoice_id=item.id, provider="sandbox",
+                       event_type=data.event, external_ref=external, payload=f"invoice:{item.id}"))
+    school = s.get(m.School, item.school_id)
+    activated = False
+    if school and (school.plan or "trial") in {"trial", "free", ""}:
+        school.plan = "standard"
+        school.status = "active"
+        activated = True
+    m.log(s, {"sid": item.school_id, "uid": ctx["uid"]}, "gateway_reconcile", "invoice", item.id)
+    s.commit()
+    return {"id": item.id, "status": item.status, "subscription_activated": activated,
+            "message": "Payment confirmed via sandbox gateway event"}
 
 
 @router.post("/billing/invoices/{invoice_id}/mark-paid")
@@ -532,10 +816,13 @@ def mark_paid(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.current
     platform_user(s, ctx)
     item = s.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.school_id == ctx["sid"]))
     if not item:
+        item = s.get(Invoice, invoice_id)
+    if not item:
         raise HTTPException(404, "Invoice not found")
-    if item.status != "issued":
+    if item.status not in {"issued", "awaiting_payment"}:
         raise HTTPException(409, "Invoice already reconciled or closed")
     item.status = "paid_manual"
+    item.paid_at = datetime.now(timezone.utc)
     # Manual invoice bookkeeping does NOT activate a subscription.
     m.log(s, ctx, "manual_reconcile", "invoice", item.id); s.commit()
     return {"id": item.id, "status": item.status, "subscription_activated": False}

@@ -135,8 +135,16 @@ def update_followup(follow_up_id:int,data:FollowUpUpdate,s:Session=Depends(m.db)
 
 @router.get("/class-assignments")
 def assignments(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
-    rows=s.scalars(select(ClassAssignment).where(ClassAssignment.school_id==ctx["sid"])).all()
-    return [{"id":x.id,"user_id":x.user_id,"class_name":x.class_name} for x in rows]
+    rows=s.execute(
+        select(ClassAssignment,m.User,m.Membership)
+        .join(m.User,m.User.id==ClassAssignment.user_id)
+        .outerjoin(m.Membership,(m.Membership.user_id==ClassAssignment.user_id)&(m.Membership.school_id==ctx["sid"]))
+        .where(ClassAssignment.school_id==ctx["sid"])
+        .order_by(m.User.email,ClassAssignment.class_name)
+    ).all()
+    return [{"id":a.id,"user_id":a.user_id,"class_name":a.class_name,
+             "email":user.email,"role":(member.role if member else None)}
+            for a,user,member in rows]
 
 @router.post("/class-assignments",status_code=201)
 def assign_class(data:ClassAssignmentIn,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
@@ -150,6 +158,47 @@ def assign_class(data:ClassAssignmentIn,s:Session=Depends(m.db),ctx=Depends(m.re
 def unassign_class(assignment_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
     x=school_record(s,ClassAssignment,assignment_id,ctx["sid"])
     s.delete(x);m.log(s,ctx,"delete","class_assignment",assignment_id);s.commit();return {"ok":True}
+
+@router.get("/cases/{case_id}/closure-checklist")
+def case_closure_checklist(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    case=school_record(s,m.Case,case_id,ctx["sid"])
+    events=s.scalars(select(CaseEvent).where(CaseEvent.school_id==ctx["sid"],CaseEvent.case_id==case.id)).all()
+    followups=s.scalars(select(FollowUp).where(FollowUp.school_id==ctx["sid"],FollowUp.case_id==case.id)).all()
+    from app.pilot_pack import Hearing, EvidenceFile
+    hearings=s.scalars(select(Hearing).where(Hearing.school_id==ctx["sid"],Hearing.case_id==case.id)).all()
+    evidence=s.scalars(select(EvidenceFile).where(EvidenceFile.school_id==ctx["sid"],EvidenceFile.case_id==case.id)).all()
+    open_followups=[f for f in followups if f.status in ("open","in_progress")]
+    decision_notes=[e for e in events if e.kind in ("decision","referral")]
+    completed_hearing=any(h.status=="completed" and (h.outcome or "").strip() for h in hearings)
+    items=[
+        {"id":"assigned","label":"Case assigned to authorised staff","required":True,"done":bool(case.assigned_user_id)},
+        {"id":"timeline","label":"At least one timeline note or decision recorded","required":True,"done":len(events)>0},
+        {"id":"decision","label":"Formal decision / referral note on timeline","required":True,"done":len(decision_notes)>0},
+        {"id":"followups","label":"No open follow-up tasks","required":True,"done":len(open_followups)==0},
+        {"id":"hearing","label":"Hearing completed with human outcome (when formal process)","required":case.status in ("formal_process","smt_review","awaiting_outcome"),
+         "done":completed_hearing or case.status not in ("formal_process","smt_review","awaiting_outcome")},
+        {"id":"evidence","label":"Evidence attached (recommended)","required":False,"done":len(evidence)>0},
+    ]
+    blocking=[i for i in items if i["required"] and not i["done"]]
+    return {"case_id":case.id,"status":case.status,"ready_to_close":len(blocking)==0 and case.status!="closed",
+            "blocking":[i["id"] for i in blocking],"items":items}
+
+
+@router.post("/cases/{case_id}/close")
+def close_case(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require("school_admin","principal","smt"))):
+    case=school_record(s,m.Case,case_id,ctx["sid"])
+    if case.status=="closed":
+        return {"ok":True,"status":"closed","message":"Already closed"}
+    checklist=case_closure_checklist(case_id,s,ctx)
+    if not checklist["ready_to_close"]:
+        raise HTTPException(409,"Closure checklist incomplete: "+", ".join(checklist["blocking"]))
+    previous=case.status
+    case.status="closed"
+    s.add(CaseEvent(school_id=ctx["sid"],case_id=case.id,author_user_id=ctx["uid"],kind="decision",
+                    note=f"Case closed by authorised staff (from {previous}). Checklist verified."))
+    m.log(s,ctx,"close","case",case.id);s.commit()
+    return {"ok":True,"status":"closed"}
+
 
 @router.get("/directory/incidents")
 def paged_incidents(limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0),

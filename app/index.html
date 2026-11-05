@@ -257,10 +257,10 @@ async function paginatedRegister(key){
  $("page-next").onclick=()=>{paging[key]=offset+50;paginatedRegister(key)};
 }
 async function classAssignmentsPage(){
- const [rows,staff]=await Promise.all([api("class-assignments"),api("case-assignees")]);
+ const rows=await api("class-assignments");
  $("page").innerHTML=head("Class assignments","School-scoped staff assignments",admin()?btn("Assign staff to class","assign-class","",false):"")+
- panel(table(["Staff","Class","Action"],rows.map(x=>[
- plain(staff.find(y=>y.user_id===x.user_id)?.label||"Staff #"+x.user_id),plain(x.class_name),
+ panel(table(["Staff","Role","Class","Action"],rows.map(x=>[
+ plain(x.email||("Staff #"+x.user_id)),plain(x.role||"—"),plain(x.class_name),
  admin()?btn("Remove","remove-class",x.id):"—"])));
 }
 async function guardianPage(){
@@ -316,9 +316,9 @@ async function details(key,id){
  if(key==="learners"){
  const items=[["Admission",d.admission_no],["Grade",d.grade],["Class",d.class_name],["Status",d.active?"Active":"Inactive"],
   ["Started grade",d.grade_started||"—"],["Enrolled from",d.enrolled_on||"—"]];
- let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,user.role==="educator"?"":btn("Edit learner","edit-learner",d.id)+(manager()?btn("Add journey note","add-observation",d.id):""));
+ let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,(user.role==="educator"?"":btn("Edit learner","edit-learner",d.id))+(manager()?btn("Add journey note","add-observation",d.id):""));
  content+=panel(table(["Field","Value"],items.map(x=>[plain(x[0]),plain(x[1])])),"Learner information");
- if(manager()||user.role==="educator"){
+ if(manager()){
   try{
    const j=await api("learners/"+d.id+"/journey");
    content+='<p class="subtle" style="margin:8px 12px 0">'+esc(j.notice||"")+'</p>';
@@ -339,7 +339,7 @@ async function details(key,id){
     const recRows=(rec.recommendations||[]).map(x=>[
       pill(x.priority),plain(x.title),plain(x.intervention_type),plain(x.rationale),
       pill(x.factor_focus||"—"),plain(x.owner_hint),plain("≤"+x.urgency_days+"d"),
-      manager()?btn("Accept","accept-recommendation",d.id+"|"+encodeURIComponent(x.intervention_type)+"|"+(x.suggested_incident_id||"")):"—"
+      btn("Accept","accept-recommendation",d.id+"|"+encodeURIComponent(x.intervention_type)+"|"+(x.suggested_incident_id||""))
     ]);
     content+=panel(
       '<p class="subtle">'+esc(rec.notice||"")+'</p>'+
@@ -353,6 +353,8 @@ async function details(key,id){
     (j.timeline||[]).slice().reverse().map(x=>[plain((x.at||"").slice(0,10)),pill(x.kind),plain(x.grade||"—"),plain(x.title),
       plain(x.level||"—"),pill(x.factor||"—")])),"Lifelong learner journey");
   }catch(e){content+=panel('<p class="subtle">Journey timeline unavailable: '+esc(e.message)+'</p>',"Learner journey")}
+ }else if(user.role==="educator"){
+  content+=panel('<p class="subtle">Learner journey, EQ/IQ observations and intervention recommendations are restricted to school management (HOD, SMT, principal, admin). Report incidents for your assigned classes; managers review the full support journey.</p>',"Learner journey");
  }
  if(manager()){
   const profile=await api("learners/"+d.id+"/discipline-profile");
@@ -374,9 +376,11 @@ async function details(key,id){
  panel(table(["Field","Details"],[["Reference",plain(d.public_ref||"#"+id)],["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Flag reason",pill(d.flag_reason||"none")],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details");return;
  }
  if(key==="cases"){
- const [events,tasks]=await Promise.all([api("cases/"+id+"/timeline"),api("cases/"+id+"/follow-ups")]);
- $("page").innerHTML=breadcrumb+head("Case #"+id,d.title,btn("Change status","edit-case",id)+btn("Assign staff","assign-case",id))+
+ const [events,tasks,checklist]=await Promise.all([api("cases/"+id+"/timeline"),api("cases/"+id+"/follow-ups"),api("cases/"+id+"/closure-checklist")]);
+ const ready=checklist.ready_to_close;
+ $("page").innerHTML=breadcrumb+head("Case #"+id,d.title,btn("Change status","edit-case",id)+btn("Assign staff","assign-case",id)+(ready&&d.status!=="closed"?btn("Close case","close-case",id,false):""))+
  panel(table(["Field","Value"],[["Learner",link("#"+d.learner_id,"learners",d.learner_id)],["Status",pill(d.status)],["Assigned user",plain(d.assigned_user_id||"Not assigned")]]),"Case information")+
+ panel(table(["Check","Required","Status"],(checklist.items||[]).map(x=>[plain(x.label),pill(x.required?"required":"optional"),pill(x.done?"done":"outstanding")])),"Closure checklist")+
  panel(table(["Linked incident"],d.incident_ids.map(x=>[link("#"+x,"incidents",x)])),"Linked incidents")+
  panel(table(["Type","Note","Date"],events.map(x=>[pill(x.kind),plain(x.note),plain(x.created_at.slice(0,16))]))+
  btn("Add case note","add-case-note",id),"Case timeline")+
@@ -432,18 +436,29 @@ async function hearingsPage(){
  panel(table(["ID","Case","When","Chair","Status","Outcome","Actions"],d.map(x=>[plain(x.id),link("Case #"+x.case_id,"cases",x.case_id),plain(x.scheduled_at.slice(0,16).replace("T"," ")),plain(x.chair),pill(x.status),plain(x.outcome),btn("Update","edit-hearing",x.id)])));
 }
 async function evidencePage(){
- const d=await api("evidence");$("page").innerHTML=head("Evidence files","School-scoped uploads for incidents or cases",btn("Upload evidence","upload-evidence","",false))+
- panel(table(["ID","File","Incident","Case","Size","Uploaded"],d.map(x=>[plain(x.id),plain(x.filename),plain(x.incident_id||"—"),plain(x.case_id||"—"),plain(x.size_bytes+" B"),plain(x.created_at.slice(0,19))])));
+ const d=await api("evidence");$("page").innerHTML=head("Evidence files","School-scoped uploads for incidents or cases — downloads are access-logged",btn("Upload evidence","upload-evidence","",false))+
+ panel(table(["ID","File","Incident","Case","Size","Uploaded","Actions"],d.map(x=>[plain(x.id),plain(x.filename),plain(x.incident_id||"—"),plain(x.case_id||"—"),plain(x.size_bytes+" B"),plain(x.created_at.slice(0,19)),
+  btn("View","view-evidence",x.id)+" "+btn("Download","download-evidence",x.id)])));
 }
 async function lettersPage(){
  const d=await api("letter-templates");$("page").innerHTML=head("Letter templates","Plain-text drafts only — not sent to guardians",btn("New template","create-letter","",false))+
  panel(table(["Code","Name","Actions"],d.map(x=>[plain(x.code),plain(x.name),btn("Render","render-letter",x.id)])));
 }
 async function parentAcksPage(){
- const d=await api("parent-acknowledgements");$("page").innerHTML=head("Parent acknowledgements","Guardian notice confirmations",btn("Invite parent","invite-parent","",false))+
- panel(table(["Learner","Subject","Email","When"],d.map(x=>[plain(x.learner_id),plain(x.subject),plain(x.email),plain(x.acknowledged_at.slice(0,19))])));
+ const [acks,notices,disputes]=await Promise.all([api("parent-acknowledgements"),api("parent-portal/notices"),api("parent-portal/disputes")]);
+ $("page").innerHTML=head("Parent communications","Invites, acknowledgements, delivery history and disputes",btn("Invite parent","invite-parent","",false))+
+ panel(table(["Learner","Email","Subject","Status","Delivery","Expires","Issued"],(notices||[]).map(x=>[
+  link("#"+x.learner_id,"learners",x.learner_id),plain(x.email),plain(x.subject),pill(x.status),
+  pill(x.delivery),plain((x.expires_at||"").slice(0,10)),plain((x.created_at||"").slice(0,19))
+ ])),"Delivery & notice history")+
+ panel(table(["Learner","Subject","Email","When"],(acks||[]).map(x=>[link("#"+x.learner_id,"learners",x.learner_id),plain(x.subject),plain(x.email),plain(x.acknowledged_at.slice(0,19))])),"Acknowledgements")+
+ panel(table(["Learner","Subject","Email","Reason","Status","When","Action"],(disputes||[]).map(x=>[
+  plain(x.learner_id),plain(x.subject),plain(x.email),plain(x.reason),pill(x.status),plain((x.created_at||"").slice(0,19)),
+  x.status==="open"?btn("Resolve","resolve-dispute",x.id):"—"
+ ])),"Disputes");
 }
 async function securityPage(){
+ try{user=await api("me")}catch(_){}
  $("page").innerHTML=head("Security & MFA","Protect staff sign-in with authenticator apps")+
  panel('<p class="subtle">MFA status: <strong>'+(user.mfa_enabled?"enabled":"disabled")+'</strong></p>'+
   btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"));
@@ -459,8 +474,17 @@ async function privacyPage(){
  panel(table(["Record type","Retain days","Notes"],(ret.policies||[]).map(x=>[plain(x.record_type),plain(x.retain_days),plain(x.notes)]))+btn("Set retention rule","set-retention","",false),'Retention policies');
 }
 async function billingPage(){
- const d=await api("billing/invoices");$("page").innerHTML=head("Billing","Local invoice stubs — no payment gateway connected",btn("Issue invoice","create-invoice","",false))+
- panel(table(["ID","Amount","Status","Description","Actions"],d.map(x=>[plain(x.id),plain((x.amount_cents/100).toFixed(2)+" "+x.currency),pill(x.status),plain(x.description),x.status==="issued"&&user.platform_admin?btn("Reconcile manually","mark-paid",x.id):""])));
+ const [d,gw]=await Promise.all([api("billing/invoices"),api("billing/gateway")]);
+ const actions=x=>{
+  if(x.status==="issued"&&gw.connected)return btn("Start checkout","start-checkout",x.id)+(user.platform_admin?" "+btn("Manual reconcile","mark-paid",x.id):"");
+  if(x.status==="issued"&&user.platform_admin)return btn("Manual reconcile","mark-paid",x.id);
+  if(x.status==="awaiting_payment"&&gw.connected&&user.platform_admin)return btn("Confirm gateway payment","simulate-pay",x.id);
+  return plain(x.payment_ref||"—");
+ };
+ $("page").innerHTML=head("Billing",gw.connected?"Sandbox payment gateway connected — confirmation via signed webhook only":"Gateway not connected — set BILLING_GATEWAY=sandbox and BILLING_WEBHOOK_SECRET",btn("Issue invoice","create-invoice","",false))+
+ panel('<p class="subtle">Gateway: <strong>'+esc(gw.provider||"none")+'</strong> · Connected: <strong>'+esc(gw.connected)+'</strong> · '+esc(gw.message||"")+'</p>')+
+ panel(table(["ID","Amount","Status","Gateway","Description","Actions"],d.map(x=>[
+  plain(x.id),plain((x.amount_cents/100).toFixed(2)+" "+x.currency),pill(x.status),pill(x.gateway||"—"),plain(x.description),actions(x)])));
 }
 async function platformPage(){
  const [schools,health]=await Promise.all([api("platform/schools"),api("platform/health")]);
@@ -541,6 +565,7 @@ async function openAction(action,id){
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
  case "create-case":{name="New case";kind="cases";const i=await api("incidents");body=await learnerPicker()+input("title","Case title","text","","required")+"<div><label>Linked incidents</label><div class=\"stack\" id=\"case-incident-choices\">"+i.map(x=>"<label><input style=\"width:auto;min-height:auto\" type=\"checkbox\" name=\"linked_incident\" value=\""+esc(x.id)+"\" data-learner=\""+esc(x.learner_id)+"\"> Incident #"+esc(x.id)+"</label>").join("")+"</div><p class=\"subtle\">Select incidents for the chosen learner; only matching incidents will be shown.</p></div>";break;}
  case "edit-case":data=await api("cases/"+id);name="Update case";kind="case-status:"+id;body=options("status","Case status",["open","monitoring","hod_review","smt_review","formal_process","awaiting_outcome","closed","reopened"].map(x=>[x,x]),data.status);break;
+ case "close-case":await api("cases/"+id+"/close","POST",{});toast("Case closed");navigate("cases/"+id);return;
  case "assign-case":name="Assign case";kind="case-assignment:"+id;body=options("assigned_user_id","Staff member",[[0,"Unassigned"],...(await api("case-assignees")).map(x=>[x.user_id,x.label])]);break;
  case "invite":name="Invite staff";kind="invitations";body=input("email","Staff email","email","","required")+options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]))+input("assigned_class","Assigned class (educator)");break;
  case "edit-member":data=(await api("members")).find(x=>String(x.id)===String(id));if(!data)throw Error("Staff member not found");name="Edit staff permissions";kind="member-update:"+id;body=options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]),data.role)+options("active","Account status",[["true","Active"],["false","Deactivated"]],String(data.active))+input("assigned_class","Assigned class", "text",data.assigned_class||"");break;
@@ -576,7 +601,12 @@ async function openAction(action,id){
  case "upload-evidence":name="Upload evidence";kind="upload-evidence";body=input("incident_id","Incident ID (optional)","number")+input("case_id","Case ID (optional)","number")+'<div><label for="evidence-file">File</label><input id="evidence-file" name="file" type="file" required></div>';break;
  case "create-letter":name="New letter template";kind="letter-templates";body=input("code","Code","text","","required")+input("name","Name","text","","required")+area("body","Body (use {{learner_name}}, {{grade}}, {{class_name}}, {{school}}, {{date}})");break;
  case "render-letter":name="Render letter draft";kind="render-letter:"+id;body=input("learner_id","Learner ID","number","","required");break;
- case "invite-parent":name="Invite parent acknowledgement";kind="parent-portal/invite";body=input("learner_id","Learner ID","number","","required")+input("email","Guardian email","email","","required")+input("subject","Subject","text","SchoolCare notice","required");break;
+ case "invite-parent":name="Invite parent acknowledgement";kind="parent-portal/invite";body=input("learner_id","Learner ID","number","","required")+input("email","Guardian email","email","","required")+input("subject","Subject","text","SchoolCare notice","required")+'<p class="subtle">If SMTP is not configured, a private token will be shown for secure sharing.</p>';break;
+ case "view-evidence":await openEvidence(id,"inline");return;
+ case "download-evidence":await openEvidence(id,"attachment");return;
+ case "start-checkout":{const r=await api("billing/invoices/"+id+"/checkout","POST",{});toast(r.message||"Checkout started");navigate("billing");return}
+ case "simulate-pay":{const r=await api("billing/webhooks/sandbox","POST",{invoice_id:Number(id),event:"payment.succeeded"});toast(r.message||"Payment reconciled");navigate("billing");return}
+ case "resolve-dispute":name="Resolve parent dispute";kind="dispute-resolve:"+id;body=options("status","Resolution",[["resolved","Resolved"],["upheld","Upheld — notice withdrawn"],["rejected","Rejected"]])+area("resolution_notes","Notes");break;
  case "mfa-setup":data=await api("mfa/setup","POST",{});modal("MFA setup",panel('<p class="subtle">Add this secret to your authenticator app, then enable MFA.</p><p><code>'+esc(data.secret)+'</code></p><p class="subtle">'+esc(data.otpauth_uri)+'</p>'));return;
  case "mfa-enable":name="Enable MFA";kind="mfa/enable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
  case "mfa-disable":name="Disable MFA";kind="mfa/disable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
@@ -588,7 +618,20 @@ async function openAction(action,id){
  case "suspend-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"suspended"});toast("School suspended");navigate("platform");return;
  case "activate-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"active"});toast("School activated");navigate("platform");return;
  case "complete-mfa":name="Enter MFA code";kind="mfa/verify-login";body=input("mfa_token","MFA token","text",id,'readonly required')+input("code","Authenticator code","text","","required minlength=\"6\"");break;
- case "parent-ack":name="Acknowledge school notice";kind="parent-portal/acknowledge";body=input("token","Access token","text",id,'readonly required')+input("subject","Subject acknowledged","text","SchoolCare notice","required");break;
+ case "parent-ack":{
+  let notice={subject:"",learner_name:"",school_name:"",can_dispute:true};
+  try{notice=await api("parent-portal/notice?token="+encodeURIComponent(id))}catch(e){toast(e.message,true);return}
+  name="Acknowledge school notice";kind="parent-portal/acknowledge";
+  body='<p class="subtle">Notice for <strong>'+esc(notice.learner_name||"learner")+'</strong>'+(notice.school_name?" at "+esc(notice.school_name):"")+'</p>'+
+   input("token","Access token","text",id,'readonly required')+
+   input("subject","Subject (must match issued notice)","text",notice.subject||"","required readonly")+
+   '<p class="subtle">Subject is fixed to the school notice that was issued. Contact the school if this is incorrect.</p>'+
+   (notice.can_dispute?btn("Dispute this notice","dispute-notice",id):"");
+  break;}
+ case "dispute-notice":{
+  name="Dispute school notice";kind="parent-portal/dispute";
+  body=input("token","Access token","text",id,'readonly required')+area("reason","Why are you disputing this notice?");
+  break;}
  default:return;
  }
  modal(name,jsonForm(kind,body,name.startsWith("Edit")?"Save changes":"Save"));bindLearnerPicker();
@@ -630,9 +673,11 @@ async function submitForm(f){
  if(k==="hearings"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="hearings"}
  if(prefix==="hearing-update"){url="hearings/"+id;method="PATCH";go="hearings"}
  if(k==="letter-templates")go="letters"
- if(prefix==="render-letter"){url="letter-templates/"+id+"/render?learner_id="+encodeURIComponent(data.learner_id);method="POST";const rendered=await api(url,method,{});modal(rendered.name,panel('<pre style="white-space:pre-wrap">'+esc(rendered.rendered_text)+'</pre><p class="subtle">Draft only — not emailed or posted.</p>'));close();return}
+ if(prefix==="render-letter"){url="letter-templates/"+id+"/render?learner_id="+encodeURIComponent(data.learner_id);method="POST";const rendered=await api(url,method,{});modal(rendered.name,panel('<pre style="white-space:pre-wrap">'+esc(rendered.rendered_text)+'</pre><p class="subtle">Draft only — not emailed or posted. Close this dialog when finished.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close preview</button></div>'));return}
  if(k==="parent-portal/invite")go="parent-acks"
  if(k==="parent-portal/acknowledge"){go="";}
+ if(k==="parent-portal/dispute")go="";
+ if(prefix==="dispute-resolve"){url="parent-portal/disputes/"+id;method="PATCH";go="parent-acks"}
  if(k==="mfa/enable"||k==="mfa/disable")go="security"
  if(k==="privacy/requests"){if(!data.learner_id)delete data.learner_id;else data.learner_id=Number(data.learner_id);go="privacy"}
  if(prefix==="privacy-review"){url="privacy/requests/"+id;method="PATCH";go="privacy"}
@@ -680,9 +725,44 @@ async function submitForm(f){
  if(k==="account-recovery/request"){toast(result.message||"Check your email for recovery instructions.");return}
  if(k==="invitations/accept"){toast("Invitation accepted. Sign in with your school identifier.");return}
  if(k==="invitations"){if(result.emailed){toast(result.notice||"Invitation emailed");navigate("staff");return}modal("Invitation generated",panel('<p>'+esc(result.notice||"Share this token privately.")+'</p><textarea readonly aria-label="Invitation token">'+esc(result.token||"")+'</textarea>'));return}
+ if(k==="parent-portal/invite"){
+  if(result.emailed){toast(result.notice||"Parent invitation emailed");navigate("parent-acks");return}
+  if(result.token){
+   const link=location.origin+"/#parent="+encodeURIComponent(result.token);
+   modal("Share parent invitation securely",panel(
+    '<p class="subtle">'+esc(result.notice||"SMTP is not configured. Share this private link or token only with the guardian.")+'</p>'+
+    '<div><label>Private link</label><textarea readonly aria-label="Parent invitation link">'+esc(link)+'</textarea></div>'+
+    '<div><label>Access token</label><textarea readonly aria-label="Parent invitation token">'+esc(result.token)+'</textarea></div>'+
+    '<p class="subtle">Expires in '+(result.expires_in_hours||168)+' hours. Do not post publicly.</p>'+
+    '<div class="form-actions"><button type="button" class="secondary" data-action="close">Done</button></div>'));
+   return;
+  }
+  toast("Parent invitation could not be delivered and no shareable token was returned",true);return;
+ }
+ if(k==="parent-portal/acknowledge"){history.replaceState(null,"",location.pathname);toast("Notice acknowledged. Thank you.");modal("Acknowledged",panel('<p>Your acknowledgement was recorded.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close</button></div>'));return}
+ if(k==="parent-portal/dispute"){history.replaceState(null,"",location.pathname);toast("Dispute submitted to the school");modal("Dispute submitted",panel('<p>The school will review your dispute. Keep your reference for follow-up.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close</button></div>'));return}
+ if(k==="mfa/enable"||k==="mfa/disable"){user=await api("me");toast(k==="mfa/enable"?"MFA enabled":"MFA disabled");navigate("security");return}
  if(k==="learners"&&result.admission_no){toast("Learner saved · admission "+result.admission_no);unsaved=false;navigate(go);return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
+}
+async function openEvidence(id,disposition){
+ const response=await fetch("/api/evidence/"+id+"/download?disposition="+encodeURIComponent(disposition||"attachment"),{
+  credentials:"same-origin",headers:{...(csrf()?{"X-CSRF-Token":csrf()}:{})}});
+ if(!response.ok){let msg="Download failed";try{const j=await response.json();msg=j.detail||msg}catch(_){}throw Error(typeof msg==="string"?msg:"Download failed")}
+ const blob=await response.blob();
+ const cd=response.headers.get("Content-Disposition")||"";
+ const match=/filename="?([^"]+)"?/i.exec(cd);
+ const name=match?match[1]:("evidence-"+id);
+ const url=URL.createObjectURL(blob);
+ if(disposition==="inline"&&(blob.type.startsWith("image/")||blob.type==="application/pdf"||blob.type==="text/plain")){
+  if(blob.type==="text/plain"){const text=await blob.text();modal("Evidence #"+id,panel('<pre style="white-space:pre-wrap">'+esc(text)+'</pre><div class="form-actions"><button type="button" class="secondary" data-action="close">Close</button></div>'));}
+  else{modal("Evidence #"+id,panel((blob.type.startsWith("image/")?'<img alt="Evidence" style="max-width:100%" src="'+url+'">':'<iframe title="Evidence PDF" style="width:100%;min-height:70vh;border:0" src="'+url+'"></iframe>')+'<div class="form-actions"><a class="secondary" href="'+url+'" download="'+esc(name)+'">Download</a> <button type="button" class="secondary" data-action="close">Close</button></div>'));}
+ }else{
+  const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+  toast("Download started");
+ }
+ setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 async function schoolSelector(){
  try{const all=await api("mine/schools");if(all.length<=1)return;

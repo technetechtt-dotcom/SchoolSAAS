@@ -9,7 +9,7 @@ import csv
 import io
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import String, ForeignKey, DateTime, Text, select, func, or_
+from sqlalchemy import String, ForeignKey, DateTime, Text, Integer, select, func, or_
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from app import main as m
 
@@ -22,6 +22,7 @@ class Appeal(m.Base):
     id:Mapped[int]=mapped_column(primary_key=True)
     school_id:Mapped[int]=mapped_column(ForeignKey("schools.id"),index=True)
     case_id:Mapped[int]=mapped_column(ForeignKey("cases.id"))
+    hearing_id:Mapped[int|None]=mapped_column(Integer,nullable=True)
     reason:Mapped[str]=mapped_column(Text)
     status:Mapped[str]=mapped_column(String(30),default="submitted")
     outcome:Mapped[str]=mapped_column(Text,default="")
@@ -48,6 +49,7 @@ class SchoolDocument(m.Base):
 
 class AppealIn(BaseModel):
     case_id:int
+    hearing_id:int|None=None
     reason:str=Field(min_length=5,max_length=3000)
 class AppealUpdate(BaseModel):
     status:str
@@ -178,11 +180,15 @@ def notifications(s:Session=Depends(m.db),ctx=Depends(m.current)):
 @router.get("/appeals")
 def appeals(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     rows=s.scalars(select(Appeal).where(Appeal.school_id==ctx["sid"]).order_by(Appeal.id.desc()).limit(200)).all()
-    return [{"id":x.id,"case_id":x.case_id,"reason":x.reason,"status":x.status,"outcome":x.outcome} for x in rows]
+    return [{"id":x.id,"case_id":x.case_id,"hearing_id":getattr(x,"hearing_id",None),"reason":x.reason,"status":x.status,"outcome":x.outcome} for x in rows]
 
 @router.post("/appeals",status_code=201)
 def add_appeal(data:AppealIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     school_record(s,m.Case,data.case_id,ctx["sid"])
+    if data.hearing_id is not None:
+        from app.pilot_pack import Hearing
+        hearing=s.scalar(select(Hearing).where(Hearing.id==data.hearing_id,Hearing.school_id==ctx["sid"],Hearing.case_id==data.case_id))
+        if not hearing:raise HTTPException(400,"Hearing must belong to the same case")
     x=Appeal(school_id=ctx["sid"],**data.model_dump());s.add(x);s.flush()
     m.log(s,ctx,"create","appeal",x.id);s.commit();return {"id":x.id}
 
@@ -227,10 +233,13 @@ def add_document(data:DocIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAG
 
 @router.get("/subscription")
 def subscription(ctx=Depends(m.require(*ADMIN)),s:Session=Depends(m.db)):
+    from app.pilot_pack import billing_gateway_status
     school=s.get(m.School,ctx["sid"])
     if not school:raise HTTPException(404,"School not found")
-    return {"plan":school.plan,"status":school.status,"billing_enabled":False,
-            "message":"Billing not configured. No payments are collected."}
+    gw=billing_gateway_status()
+    return {"plan":school.plan,"status":school.status,"billing_enabled":gw["connected"],"gateway":gw,
+            "message":("Sandbox payment gateway connected." if gw["connected"]
+                       else "Billing gateway not configured. No payments are collected.")}
 
 
 class SchoolSwitch(BaseModel):

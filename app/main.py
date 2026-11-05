@@ -215,6 +215,14 @@ def _ensure_sqlite_columns():
             ('enrolled_on', 'DATE'),
             ('grade_started', 'VARCHAR(25)'),
         ],
+        'invoices': [
+            ('gateway', "VARCHAR(40) DEFAULT 'none'"),
+            ('payment_ref', 'VARCHAR(80)'),
+            ('paid_at', 'DATETIME'),
+        ],
+        'appeals': [
+            ('hearing_id', 'INTEGER'),
+        ],
     }
     with engine.begin() as conn:
         for table, cols in planned.items():
