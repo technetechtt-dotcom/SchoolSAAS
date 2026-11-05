@@ -122,7 +122,7 @@ const groups=[
 const manager=()=>user&&["school_admin","principal","smt","hod"].includes(user.role);
 const admin=()=>user&&["school_admin","principal"].includes(user.role);
 const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments","hearings","evidence","letters","parent-acks","conduct"].includes(key)||manager()||key==="guide";
-const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","security","privacy","billing","platform"].includes(key)||admin())&&(key!=="platform"||user.platform_admin);
+const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","privacy","billing","platform"].includes(key)||admin())&&(key!=="platform"||user.platform_admin);
 const input=(name,label,type="text",value="",extra="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><input id="field-'+esc(name)+'" name="'+esc(name)+'" type="'+esc(type)+'" value="'+esc(value)+'" '+extra+'></div>';
 const area=(name,label,value="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><textarea id="field-'+esc(name)+'" name="'+esc(name)+'">'+esc(value)+'</textarea></div>';
 const options=(name,label,items,current="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><select id="field-'+esc(name)+'" name="'+esc(name)+'">'+items.map(x=>'<option value="'+esc(x[0])+'" '+(String(x[0])===String(current)?"selected":"")+'>'+esc(x[1])+'</option>').join("")+'</select></div>';
