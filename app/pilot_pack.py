@@ -77,6 +77,7 @@ class ParentAccess(m.Base):
     learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"), index=True)
     email: Mapped[str] = mapped_column(String(255))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    subject: Mapped[str] = mapped_column(String(200), default="SchoolCare notice")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -450,7 +451,7 @@ def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
         raise HTTPException(404, "Learner not found")
     token = secrets.token_urlsafe(32)
     item = ParentAccess(school_id=ctx["sid"], learner_id=data.learner_id, email=data.email.lower(),
-                        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                        subject=data.subject, token_hash=hashlib.sha256(token.encode()).hexdigest(),
                         expires_at=datetime.now(timezone.utc) + timedelta(days=7))
     s.add(item); s.flush()
     link = mailer.public_url(f"/#parent={token}")
@@ -477,8 +478,10 @@ def parent_ack(data: ParentAckIn, s: Session = Depends(m.db)):
     access = s.scalar(select(ParentAccess).where(ParentAccess.token_hash == digest))
     if not access or access.used or access.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
         raise HTTPException(400, "Parent access token invalid or expired")
+    if data.subject.strip() != access.subject:
+        raise HTTPException(400, "Acknowledgement subject must match the issued school notice")
     access.used = True
-    ack = ParentAck(school_id=access.school_id, learner_id=access.learner_id, subject=data.subject, email=access.email)
+    ack = ParentAck(school_id=access.school_id, learner_id=access.learner_id, subject=access.subject, email=access.email)
     s.add(ack); s.commit()
     return {"ok": True, "acknowledged": True}
 
