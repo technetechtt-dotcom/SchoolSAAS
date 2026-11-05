@@ -22,7 +22,7 @@ with sync_playwright() as playwright:
     page.locator("#reg-password").fill("fictional-password-for-testing")
     page.locator("#register button").click()
     page.locator("#app-shell:not([hidden])").wait_for(timeout=15000)
-    page.locator('[data-go="learners"]').click()
+    page.locator('#nav [data-go="learners"]').click()
     page.wait_for_timeout(1500)
     if not page.get_by_role("heading",name="Learners",exact=True).is_visible():
         raise AssertionError("Learner navigation failed; URL="+page.url+"; page="+page.locator("#page").inner_text()[:2500])
