@@ -435,7 +435,7 @@ async function details(key,id){
  $("page").innerHTML=content;return;
  }
  if(key==="incidents"){
- let actions=manager()?btn("Review incident","review-incident",id):"";
+ let actions=manager()?btn("Review incident","review-incident",id)+btn("Prepare referral draft","prepare-referral",id):"";
  let checklistHtml="";
  if(manager()){
   try{
@@ -712,6 +712,11 @@ async function openAction(action,id){
   body="<p class=\"subtle\">Closure requires the checklist via <strong>Close case</strong> — not this status list.</p>"+
    options("status","Case status",statuses,data.status);
   break;}
+ case "prepare-referral":{
+  const prepared=await api("automation/incidents/"+id+"/referral-draft","POST",{});
+  toast(prepared.reused?"Existing draft opened":"Referral draft prepared for management approval");
+  navigate("documents");return;
+ }
  case "close-case":
   if(!confirm("Close this case? The closure checklist must already be complete."))return;
   await api("cases/"+id+"/close","POST",{});toast("Case closed");navigate("cases/"+id);return;
