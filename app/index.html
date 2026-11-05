@@ -449,9 +449,13 @@ async function securityPage(){
   btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"));
 }
 async function privacyPage(){
- const [status,ret]=await Promise.all([api("privacy/status"),api("privacy/retention")]);
- $("page").innerHTML=head("Privacy & retention","POPIA readiness placeholders — legal advice required")+
+ const [status,ret,requests]=await Promise.all([api("privacy/status"),api("privacy/retention"),api("privacy/requests")]);
+ $("page").innerHTML=head("Privacy & retention","Track requests and safeguards; independent POPIA review remains necessary")+
  panel('<ul class="subtle"><li>POPIA assessment complete: '+esc(status.popia_assessment_complete)+'</li><li>Lawful basis recorded: '+esc(status.lawful_basis_recorded)+'</li><li>Operator agreement on file: '+esc(status.operator_agreement_on_file)+'</li><li>'+esc(status.message)+'</li></ul>')+
+ panel(table(["Request","Requester","Type","Identity","Status","Due","Action"],requests.map(x=>[
+ plain(x.id),plain(x.requester_name),plain(x.request_type),pill(x.verification_status),
+ pill(x.status),plain(x.due_at.slice(0,10)),btn("Review","review-data-request",x.id)]))+
+ btn("Log a data request","new-data-request","",false),"Data subject requests")+
  panel(table(["Record type","Retain days","Notes"],(ret.policies||[]).map(x=>[plain(x.record_type),plain(x.retain_days),plain(x.notes)]))+btn("Set retention rule","set-retention","",false),'Retention policies');
 }
 async function billingPage(){
@@ -576,6 +580,8 @@ async function openAction(action,id){
  case "mfa-setup":data=await api("mfa/setup","POST",{});modal("MFA setup",panel('<p class="subtle">Add this secret to your authenticator app, then enable MFA.</p><p><code>'+esc(data.secret)+'</code></p><p class="subtle">'+esc(data.otpauth_uri)+'</p>'));return;
  case "mfa-enable":name="Enable MFA";kind="mfa/enable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
  case "mfa-disable":name="Disable MFA";kind="mfa/disable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "new-data-request":name="Log privacy request";kind="privacy/requests";body=input("requester_name","Requester name","text","","required")+input("requester_contact","Contact","text","","required")+input("learner_id","Learner ID (optional)","number")+options("request_type","Request type",["access","correction","objection","deletion_review","other"].map(x=>[x,x]));break;
+ case "review-data-request":name="Review privacy request";kind="privacy-review:"+id;body=options("verification_status","Identity verification",["unverified","verified","rejected"].map(x=>[x,x]))+options("status","Request status",["received","under_review","awaiting_identity","awaiting_legal_review","fulfilled","declined"].map(x=>[x,x]))+area("notes","Review notes");break;
  case "set-retention":name="Retention rule";kind="privacy/retention";body=input("record_type","Record type","text","incidents","required")+input("retain_days","Retain days","number","2555","required min=\"30\"")+input("notes","Notes","text");break;
  case "create-invoice":name="Issue invoice";kind="billing/invoices";body=input("amount_cents","Amount in cents","number","50000","required min=\"100\"")+input("description","Description","text","SchoolCare subscription");break;
  case "mark-paid":await api("billing/invoices/"+id+"/mark-paid","POST",{});toast("Invoice marked paid (manual)");navigate("billing");return;
@@ -628,6 +634,8 @@ async function submitForm(f){
  if(k==="parent-portal/invite")go="parent-acks"
  if(k==="parent-portal/acknowledge"){go="";}
  if(k==="mfa/enable"||k==="mfa/disable")go="security"
+ if(k==="privacy/requests"){if(!data.learner_id)delete data.learner_id;else data.learner_id=Number(data.learner_id);go="privacy"}
+ if(prefix==="privacy-review"){url="privacy/requests/"+id;method="PATCH";go="privacy"}
  if(k==="privacy/retention"){url="privacy/retention";method="PUT";data.retain_days=Number(data.retain_days);go="privacy"}
  if(k==="billing/invoices"){data.amount_cents=Number(data.amount_cents);go="billing"}
  if(k==="mfa/verify-login"){await api(k,"POST",data);user=await api("me");if(!user.authenticated)throw Error("MFA session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';close();navigate("dashboard");schoolSelector();toast("Signed in with MFA");return}
