@@ -686,7 +686,21 @@ async function openAction(action,id){
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Default level",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]])+options("escalate_hod","Escalate to HOD",[["false","No"],["true","Yes"]])+options("escalate_smt","Escalate to SMT",[["false","No"],["true","Yes"]])+input("similarity_group","Similarity group (optional)","text","","placeholder=\"e.g. punctuality\"")+input("repeat_threshold","Per-offence repeat threshold (optional)","number","","min=\"1\" max=\"20\"");break;
  case "edit-offence":data=(await api("offences")).find(x=>String(x.id)===String(id));if(!data)throw Error("Offence not found");name="Edit unused offence";kind="offence-update:"+id;body="<p class=\"subtle\">Offences already used in incidents cannot be edited. Create a new offence code for revised policies.</p>"+input("name","Name","text",data.name,"required")+input("category","Category","text",data.category,"required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]],data.severity);break;
- case "create-incident":name="Report incident";kind="incidents";body=await learnerPicker()+options("offence_id","Offence",(await schoolOffences()).map(x=>[x.id,x.code+" · "+x.name]))+options("location","Location",["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"].map(x=>[x,x]))+area("description","Description")+options("immediate_action","Immediate action",["Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x]));break;
+ case "create-incident":{
+  name="Quick incident report";kind="incidents";
+  const [pick,offences,shortcuts]=await Promise.all([learnerPicker(),schoolOffences(),api("teacher/incident-shortcuts")]);
+  const fav=new Set(shortcuts.favourite_offence_ids||[]);
+  const ranked=[...offences].sort((a,b)=>Number(fav.has(b.id))-Number(fav.has(a.id)));
+  const locations=["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"];
+  const currentLocation=locations.includes(shortcuts.last_location)?shortcuts.last_location:"Classroom";
+  body='<p class="subtle">Record only what happened. Learner, class, staff and dates are filled automatically. Your previous choices are suggestions, not decisions.</p>'+
+   pick+options("offence_id","Incident category",ranked.map(x=>[x.id,(fav.has(x.id)?"★ Recently used · ":"")+x.code+" · "+x.name]))+
+   options("location","Where did it happen?",locations.map(x=>[x,x]),currentLocation)+
+   '<div>'+area("description","What happened?")+
+   '<button type="button" class="secondary" data-action="dictate-incident">Dictate description (supported browsers)</button></div>'+
+   options("immediate_action","Immediate action taken",[["","Select what you actually did"],...["No immediate action","Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x])]);
+  break;
+ }
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
  case "create-case":{name="New case";kind="cases";const i=await api("incidents");body=await learnerPicker()+input("title","Case title","text","","required")+"<div><label>Linked incidents</label><div class=\"stack\" id=\"case-incident-choices\">"+i.map(x=>"<label><input style=\"width:auto;min-height:auto\" type=\"checkbox\" name=\"linked_incident\" value=\""+esc(x.id)+"\" data-learner=\""+esc(x.learner_id)+"\"> Incident #"+esc(x.id)+"</label>").join("")+"</div><p class=\"subtle\">Select incidents for the chosen learner; only matching incidents will be shown.</p></div>";break;}
  case "edit-case":{
@@ -842,7 +856,13 @@ async function openAction(action,id){
  default:return;
  }
  modal(name,jsonForm(kind,body,name.startsWith("Edit")?"Save changes":"Save"));bindLearnerPicker();
- if(action==="create-case"){const update=()=>{const learner=$("modal-body").querySelector("[name=learner_id]").value;$("modal-body").querySelectorAll("[name=linked_incident]").forEach(ch=>{ch.parentElement.hidden=ch.dataset.learner!==learner;if(ch.dataset.learner!==learner)ch.checked=false})};$("modal-body").querySelector("[name=learner_id]").addEventListener("change",update);update()}
+ if(action==="create-incident"){
+   for(const field of ["learner_id","offence_id","location","description","immediate_action"]){
+    const element=$("modal-body").querySelector('[name="'+field+'"]');
+    if(element)element.required=true;
+   }
+  }
+  if(action==="create-case"){const update=()=>{const learner=$("modal-body").querySelector("[name=learner_id]").value;$("modal-body").querySelectorAll("[name=linked_incident]").forEach(ch=>{ch.parentElement.hidden=ch.dataset.learner!==learner;if(ch.dataset.learner!==learner)ch.checked=false})};$("modal-body").querySelector("[name=learner_id]").addEventListener("change",update);update()}
 }
 async function submitForm(f){
  if(f.dataset.busy==="1")return;
@@ -1036,6 +1056,19 @@ document.addEventListener("click",async e=>{
   if(x==="close"){close();return}if(x==="reload"){render();return}
   if(x==="go-learners"){navigate("learners");return}
   if(x==="go-guide"){navigate("guide");return}
+  if(x==="dictate-incident"){
+   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+   if(!Recognition){toast("Voice dictation is not supported in this browser; type the description instead.",true);return}
+   const field=$("modal-body").querySelector('[name="description"]');
+   if(!field)return;
+   const recognition=new Recognition();
+   recognition.lang="en-ZA";recognition.interimResults=false;recognition.maxAlternatives=1;
+   recognition.onresult=event=>{const spoken=event.results[0][0].transcript;
+    field.value=(field.value.trim()?field.value.trim()+" ":"")+spoken;unsaved=true;field.focus();
+    toast("Dictation added. Check accuracy before submitting.")};
+   recognition.onerror=event=>toast("Dictation failed: "+event.error,true);
+   recognition.start();return;
+  }
   if(x==="go-offences"){navigate("offences");return}
   if(x==="go-onboarding"){navigate("onboarding");return}
   if(x==="remove-class"){if(!confirm("Remove class assignment?"))return;try{await api("class-assignments/"+a.dataset.id,"DELETE");toast("Removed");render()}catch(err){toast(err.message,true)}return}
