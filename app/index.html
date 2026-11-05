@@ -185,13 +185,18 @@ let recPref={type:"",incidentId:"",notes:""};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
- const [d,n,stats,warn,hot,reps,irec,setup]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations"),api("onboarding/status")]);
+ const [d,n,stats,warn,hot,reps,irec,setup,due]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations"),api("onboarding/status"),api("automation/followups/due")]);
  const metric=(label,value,go)=>'<button type="button" class="metric" data-go="'+esc(go)+'" style="text-align:left;cursor:pointer;width:100%"><small>'+esc(label)+'</small><strong>'+esc(value)+'</strong></button>';
  $("page").innerHTML=head("Good day, "+d.school,"Capture once — history, reviews, interventions and trends update automatically",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+
  (!setup.complete?panel('<p><strong>School setup '+esc(setup.progress_percent)+'% complete.</strong> '+esc(setup.message)+'</p>'+btn("Continue setup","go-onboarding","",false),"Onboarding required"):"")+
  '<div class="cards">'+metric("Learners",d.learners,"learners")+metric("Incidents",d.incidents,"incidents")+metric("Open cases",d.open_cases,"cases")+'</div>'+
  '<div class="cards">'+metric("Early warning · overdue interventions",warn.counts.overdue_interventions,"interventions")+metric("Outstanding parent meetings",warn.counts.overdue_appointments,"appointments")+metric("Auto intervention needs",(irec.counts&&irec.counts.learners_flagged)||0,"learners")+metric("Serious / open reviews",warn.counts.serious_open+" / "+warn.counts.open_reviews,"tasks")+'</div>'+
- panel(table(["Intervention","Incident","Due","Outcome"],(warn.overdue_interventions||[]).slice(0,8).map(x=>[
+ panel(table(["Case","Task","Due","Status"],(due.items||[]).slice(0,10).map(x=>[
+  link("#"+x.case_id,"cases",x.case_id),plain(x.summary),plain(x.due_at.slice(0,10)),
+  pill(x.overdue?"overdue":"due soon")]))+
+  (admin()?btn("Queue staff reminders","queue-reminders","",false):""),
+  "Due case follow-ups")+
+  panel(table(["Intervention","Incident","Due","Outcome"],(warn.overdue_interventions||[]).slice(0,8).map(x=>[
   link("#"+x.id,"interventions"),link("#"+x.incident_id,"incidents",x.incident_id),plain((x.due_at||"").slice(0,10)),pill(x.outcome)
  ])),"Overdue interventions — assigned follow-up")+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(hot.by_location||d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Hotspots · locations ("+esc(hot.window_days)+" days)")+
@@ -1076,6 +1081,12 @@ document.addEventListener("click",async e=>{
   }
   if(x==="go-offences"){navigate("offences");return}
   if(x==="go-onboarding"){navigate("onboarding");return}
+  if(x==="queue-reminders"){
+   if(!confirm("Queue reminder emails to assigned staff? This will not contact guardians."))return;
+   try{const result=await api("automation/followups/queue-reminders","POST",{});
+     toast(result.queued+" reminders queued; "+result.skipped+" skipped");render();}
+   catch(err){toast(err.message,true)}return;
+  }
   if(x==="remove-class"){if(!confirm("Remove class assignment?"))return;try{await api("class-assignments/"+a.dataset.id,"DELETE");toast("Removed");render()}catch(err){toast(err.message,true)}return}
   try{await openAction(x,a.dataset.id)}catch(err){toast(err.message,true)}
  }
