@@ -296,6 +296,7 @@ def startup():
         import app.onboarding  # noqa: F401
         import app.letter_workflow  # noqa: F401
         import app.account_security  # noqa: F401
+        import app.directory_ops  # noqa: F401
         Base.metadata.create_all(engine)
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
@@ -765,13 +766,17 @@ def accept_invite(data:InviteAccept,s:Session=Depends(db)):
 
 @app.patch('/api/members/{member_id}')
 def patch_member(member_id:int,data:MemberPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
+    from sqlalchemy import delete as sa_delete
     m=s.scalar(select(Membership).where(Membership.id==member_id,Membership.school_id==ctx['sid']))
     if not m:raise HTTPException(404,'Member not found')
     if data.role not in STAFF_ROLES or (data.role=='school_admin' and ctx['role']!='school_admin'):
         raise HTTPException(400,'Role not permitted')
     if m.role=='school_admin' and ctx['role']!='school_admin':raise HTTPException(403,'Admin required')
     if m.user_id==ctx['uid'] and (not data.active or data.role!=m.role):raise HTTPException(400,'Cannot disable or demote self')
+    was_active=m.active
     m.active=data.active;m.role=data.role;m.assigned_class=data.assigned_class
+    if was_active and not data.active:
+        s.execute(sa_delete(ActiveSession).where(ActiveSession.user_id==m.user_id,ActiveSession.school_id==ctx['sid']))
     log(s,ctx,'update','membership',m.id);s.commit();return {'ok':True}
 
 @app.patch('/api/learners/{learner_id}')
@@ -938,6 +943,8 @@ from app.account_security import router as account_security_router
 app.include_router(account_security_router)
 from app.learner_activity import router as learner_activity_router
 app.include_router(learner_activity_router)
+from app.directory_ops import router as directory_ops_router
+app.include_router(directory_ops_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 

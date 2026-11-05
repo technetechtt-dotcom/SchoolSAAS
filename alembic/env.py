@@ -3,7 +3,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 import os
 from app import main
-from app import extended, operations, pilot_pack, learner_journey, privacy_requests, onboarding, letter_workflow, session_security, account_security  # noqa: F401
+from app import extended, operations, pilot_pack, learner_journey, privacy_requests, onboarding, letter_workflow, session_security, account_security, directory_ops  # noqa: F401
 
 config=context.config
 target_metadata=main.Base.metadata

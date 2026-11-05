@@ -229,7 +229,7 @@ async function learnerDirectory(){
  state.total=response.total;
  const gradeOptions=['<option value="">All grades</option>'].concat((response.grades||[]).map(g=>'<option value="'+esc(g.grade)+'" '+(String(state.grade)===String(g.grade)?"selected":"")+'>Grade '+esc(g.grade)+' ('+esc(g.learners)+')</option>')).join("");
  const chips=(response.grades||[]).map(g=>'<button type="button" class="secondary" data-grade-filter="'+esc(g.grade)+'"'+(String(state.grade)===String(g.grade)?' style="background:#d7e6ff"':'')+'>Grade '+esc(g.grade)+'</button>').join(" ");
- $("page").innerHTML=head(state.grade?"Learners · Grade "+state.grade:"Learners","Find every learner quickly — by grade, name, admission or class",user.role==="educator"?"":btn("Add learner","create-learner","",false)+(admin()?btn("Import CSV","import-learners"):""))+
+ $("page").innerHTML=head(state.grade?"Learners · Grade "+state.grade:"Learners","Find every learner quickly — by grade, name, admission or class",user.role==="educator"?"":btn("Add learner","create-learner","",false)+(admin()?btn("Import CSV","import-learners")+btn("Bulk update CSV","bulk-update-learners"):""))+
  panel('<div class="search-row"><input id="directory-query" type="search" placeholder="Name, admission number, grade or class" aria-label="Search learners" value="'+esc(state.q)+'">'+
  '<select id="grade-filter" aria-label="Filter by grade">'+gradeOptions+'</select>'+
  '<span class="result">'+esc(state.total)+(state.grade?" in grade "+esc(state.grade):"")+' learner records</span></div>'+
@@ -275,7 +275,7 @@ async function guardianPage(){
 }
 
 async function staffPage(){
- const [members,invites]=await Promise.all([api("members"),api("invitations")]);
+ const [members,invites,review]=await Promise.all([api("members"),api("invitations"),admin()?api("staff/access-review"):Promise.resolve(null)]);
  $("page").innerHTML=head("Staff & access","Invite staff, manage roles and revoke pending invitations",btn("Invite staff","invite","",false))+
  panel(table(["Email","Role","Class","Status","Security"],(members||[]).map(x=>[
   plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id),
@@ -285,7 +285,17 @@ async function staffPage(){
   plain(x.email),plain(x.role),pill(x.status),pill(x.delivery_status||"—"),plain(x.delivery_attempts||0),
   plain((x.expires_at||"").slice(0,10)),
   (x.can_resend?btn("Resend","resend-invite",x.id):"")+(x.can_revoke?btn("Revoke","revoke-invite",x.id):x.can_resend||x.can_revoke?"":plain("—"))
- ])),"Pending & historical invitations");
+ ])),"Pending & historical invitations")+
+ (review?panel('<p class="subtle">'+esc(review.notice||"")+' · Flagged: <strong>'+esc(review.flagged_count)+'</strong> · Pending invites: <strong>'+esc(review.pending_invites)+'</strong></p>'+
+  table(["Email","Role","Last seen","Flags","Action"],(review.items||[]).filter(x=>x.flags&&x.flags.length).map(x=>[
+   plain(x.email),plain(x.role),plain((x.last_seen_at||"never").slice(0,19)),pill((x.flags||[]).join(", ")),
+   (x.active&&x.user_id!==user.uid?'<label><input type="checkbox" name="review-deactivate" value="'+esc(x.member_id)+'"> Deactivate</label>':plain("—"))
+  ]))+
+  area("review_notes","Review notes","Termly access review completed.")+
+  btn("Record access review","complete-access-review","",false)+
+  ((review.recent_reviews||[]).length?table(["When","By user","Deactivated","Notes"],review.recent_reviews.map(x=>[
+   plain((x.created_at||"").slice(0,19)),plain(x.reviewed_by),plain(x.deactivated_count),plain(x.notes||"—")
+  ])):""),"Staff access review"):"");
 }
 async function listPage(key){
  if(key==="staff"){await staffPage();return}
@@ -639,7 +649,13 @@ async function openAction(action,id){
  case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
  case "update-followup":name="Update follow-up";kind="followup-update:"+id;body=options("status","Status",["open","in_progress","completed","cancelled"].map(x=>[x,x]));break;
  case "assign-class":name="Assign class";kind="class-assignments";body=options("user_id","Staff",(await api("members")).filter(x=>x.active).map(x=>[x.user_id,x.email]))+input("class_name","Class","text","","required");break;
- case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. Required headers: first_name, surname, grade, class_name. Optional: admission_no (auto-generated when blank). Maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
+ case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. Required headers: first_name, surname, grade, class_name. Optional: admission_no. Maximum 1,000 rows. A validation preview runs before import.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
+ case "bulk-update-learners":name="Bulk update learners from CSV";kind="bulk-update-learners";body="<p class=\"subtle\">Headers: admission_no (required) plus any of grade, class_name, first_name, surname, active (true/false). Optional placement history when grade/class changes.</p>"+'<div><label for="bulk-update-csv">CSV file</label><input id="bulk-update-csv" name="file" type="file" accept=".csv,text/csv" required></div>'+options("record_placements","Record placement history",[["false","No"],["true","Yes"]])+options("placement_reason","Placement reason",[["correction","Correction"],["promotion","Promotion"],["transfer","Transfer"],["withdrawal","Withdrawal"],["reenrolment","Re-enrolment"]]);break;
+ case "complete-access-review":{
+  const ids=Array.from(document.querySelectorAll('input[name="review-deactivate"]:checked')).map(x=>Number(x.value));
+  const notes=($("page").querySelector('[name="review_notes"]')||{}).value||"";
+  const r=await api("staff/access-review/complete","POST",{notes,deactivate_member_ids:ids});
+  toast(r.notice||("Review saved · deactivated "+(r.deactivated||0)));navigate("staff");return;}
  case "create-learner":name="New learner";kind="learners";body="<p class=\"subtle\">Admission number is assigned automatically (ADM-00001 format).</p>"+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required placeholder=\"e.g. 7\"")+input("class_name","Class","text","","required placeholder=\"e.g. 7A\"");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
  case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Default level",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]])+options("escalate_hod","Escalate to HOD",[["false","No"],["true","Yes"]])+options("escalate_smt","Escalate to SMT",[["false","No"],["true","Yes"]])+input("similarity_group","Similarity group (optional)","text","","placeholder=\"e.g. punctuality\"")+input("repeat_threshold","Per-offence repeat threshold (optional)","number","","min=\"1\" max=\"20\"");break;
@@ -863,7 +879,7 @@ async function submitForm(f){
    const result=await response.json();if(!response.ok)throw Error(typeof result.detail==="string"?result.detail:"Upload failed");
    toast("Evidence uploaded");unsaved=false;close();navigate("evidence");return
  }
- if(k==="import-learners"){
+ if(k==="import-learners"||k==="bulk-update-learners"){
    const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a CSV file",true);return}
    const text=await file.text();
    const parsed=[];let cells=[],value="",quoted=false;
@@ -876,12 +892,28 @@ async function submitForm(f){
    }
    cells.push(value);if(cells.some(x=>x.trim()))parsed.push(cells);
    const header=parsed.shift()?.map(x=>x.trim().toLowerCase());
-   const required=["first_name","surname","grade","class_name"];
-   if(!header||!required.every(x=>header.includes(x))){toast("CSV must include first_name, surname, grade and class_name (admission_no optional)",true);return}
    if(parsed.length>1000){toast("Maximum 1,000 learner rows per file",true);return}
-   const cols=["admission_no","first_name","surname","grade","class_name"];
-   const rows=parsed.map(parts=>Object.fromEntries(cols.map(x=>[x,header.includes(x)?(parts[header.indexOf(x)]||"").trim():""])));
-   data={rows};url="learners/import";go="learners";
+   if(k==="import-learners"){
+    const required=["first_name","surname","grade","class_name"];
+    if(!header||!required.every(x=>header.includes(x))){toast("CSV must include first_name, surname, grade and class_name (admission_no optional)",true);return}
+    const cols=["admission_no","first_name","surname","grade","class_name"];
+    const rows=parsed.map(parts=>Object.fromEntries(cols.map(x=>[x,header.includes(x)?(parts[header.indexOf(x)]||"").trim():""])));
+    const preview=await api("learners/import/preview","POST",{rows});
+    if(preview.invalid>0&&!confirm("Preview: "+preview.valid+" valid, "+preview.invalid+" invalid. Import valid rows and skip invalid?")){return}
+    if(preview.will_create===0){toast("No valid rows to import",true);return}
+    data={rows};url="learners/import";go="learners";
+   }else{
+    if(!header||!header.includes("admission_no")){toast("Bulk update CSV must include admission_no",true);return}
+    const cols=["admission_no","first_name","surname","grade","class_name","active"];
+    const rows=parsed.map(parts=>{
+     const obj=Object.fromEntries(cols.filter(x=>header.includes(x)).map(x=>[x,(parts[header.indexOf(x)]||"").trim()]));
+     if(obj.active!==undefined){const a=String(obj.active).toLowerCase();obj.active=(a==="true"||a==="1"||a==="yes");}
+     ["first_name","surname","grade","class_name"].forEach(k=>{if(obj[k]==="")delete obj[k]});
+     return obj;
+    });
+    data={rows,record_placements:String(data.record_placements)==="true",placement_reason:data.placement_reason||"correction"};
+    url="learners/bulk-update";go="learners";
+   }
  }
  if(k==="cases"){data.incident_ids=Array.from(f.querySelectorAll("[name=linked_incident]:checked")).map(x=>Number(x.value));if(!data.incident_ids.length){toast("Select at least one incident",true);return}go="cases"}
  if(k==="parent-contacts")go="contacts";
@@ -923,7 +955,9 @@ async function submitForm(f){
   modal("New MFA recovery codes",panel('<p class="subtle">'+esc(result.notice||"Save these now.")+'</p><pre style="white-space:pre-wrap">'+esc(codes.join("\n"))+'</pre><div class="form-actions"><button type="button" class="secondary" data-action="close">Done</button></div>'));navigate("security");return}
  if(prefix==="member-mfa-reset"){toast(result.notice||"Staff MFA reset");navigate("staff");return}
  if(k==="learners"&&result.admission_no){toast("Learner saved · admission "+result.admission_no);unsaved=false;navigate(go);return}
- toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
+ toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+(result.skipped||[]).length+" duplicates":
+  k==="bulk-update-learners"?"Updated "+result.updated+" learners; skipped "+(result.skipped||[]).length:
+  "Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
  }catch(e){toast(e.message,true)}
  finally{f.dataset.busy="0";if(submitBtn){submitBtn.disabled=false;submitBtn.textContent=submitBtn.dataset.label||"Save"}}
