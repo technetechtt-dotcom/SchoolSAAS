@@ -464,7 +464,13 @@ async function platformPage(){
  panel('<p class="subtle">Schools: '+esc(health.schools)+' · Users: '+esc(health.users)+' · SMTP: '+esc(health.smtp_configured)+' · COOKIE_SECURE: '+esc(health.cookie_secure)+'</p>')+
  panel(table(["ID","Name","Slug","Plan","Status","Actions"],schools.map(x=>[plain(x.id),plain(x.name),plain(x.slug),plain(x.plan),pill(x.status),btn("Suspend","suspend-school",x.id)+" "+btn("Activate","activate-school",x.id)])));
 }
+let renderQueue=Promise.resolve();
 async function render(){
+ const previous=renderQueue;
+ let finished;
+ renderQueue=new Promise(resolve=>{finished=resolve});
+ await previous;
+ try{
  if(!user)return;navigation();let key=path().split("/")[0],id=path().split("/")[1];
  if(!can(key)){location.hash="#/dashboard";key="dashboard";id=null}
  $("page").innerHTML=panel('<p class="subtle">Loading…</p>');
@@ -493,6 +499,7 @@ async function render(){
  else await dashboard();
  $("main").focus({preventScroll:true});
  }catch(e){$("page").innerHTML=head("Unable to load page","The request could not be completed")+panel('<p role="alert">'+esc(e.message)+'</p>'+btn("Retry","reload"))}
+ }finally{finished()}
 }
 async function openAction(action,id){
  let data,body="",name="",kind="";
