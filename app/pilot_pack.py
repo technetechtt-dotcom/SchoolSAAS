@@ -356,13 +356,28 @@ async def upload_evidence(incident_id: int | None = Form(None), case_id: int | N
                           ctx=Depends(m.require("school_admin", "principal", "smt", "hod", "educator"))):
     if not incident_id and not case_id:
         raise HTTPException(400, "Provide incident_id or case_id")
+    if ctx["role"] == "educator":
+        if case_id:
+            raise HTTPException(403, "Educators cannot upload evidence directly to cases")
+        incident = s.scalar(select(m.Incident).where(
+            m.Incident.id == incident_id, m.Incident.school_id == ctx["sid"],
+            m.Incident.reporter_id == ctx["uid"]))
+        if not incident:
+            raise HTTPException(403, "Only the reporting educator may attach evidence to their incident")
+        learner = s.scalar(select(m.Learner).where(
+            m.Learner.id == incident.learner_id,m.Learner.school_id == ctx["sid"]))
+        if not learner or learner.class_name not in ctx["assigned_classes"]:
+            raise HTTPException(403, "Learner is outside your assigned classes")
     if incident_id:
         if not s.scalar(select(m.Incident).where(m.Incident.id == incident_id, m.Incident.school_id == ctx["sid"])):
             raise HTTPException(404, "Incident not found")
     if case_id:
         if not s.scalar(select(m.Case).where(m.Case.id == case_id, m.Case.school_id == ctx["sid"])):
             raise HTTPException(404, "Case not found")
-    raw = await file.read()
+    approved_types={"application/pdf","image/png","image/jpeg","text/plain"}
+    if file.content_type not in approved_types:
+        raise HTTPException(415, "Unsupported evidence type")
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(400, f"File exceeds {MAX_UPLOAD_BYTES} bytes")
     if not raw:
