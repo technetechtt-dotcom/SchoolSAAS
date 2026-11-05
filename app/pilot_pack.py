@@ -342,11 +342,25 @@ def patch_hearing(hearing_id: int, data: HearingPatch, s: Session = Depends(m.db
     item = s.scalar(select(Hearing).where(Hearing.id == hearing_id, Hearing.school_id == ctx["sid"]))
     if not item:
         raise HTTPException(404, "Hearing not found")
+    valid_statuses={"scheduled","in_progress","adjourned","completed","cancelled"}
+    if data.status not in valid_statuses:
+        raise HTTPException(400,"Invalid hearing status")
+    if item.status in ("completed","cancelled") and data.status!=item.status:
+        raise HTTPException(409,"Concluded hearing cannot be reopened without a formal review")
+    if data.status=="completed" and not data.outcome.strip():
+        raise HTTPException(422,"A documented human-reviewed outcome is required")
+    previous=item.status
     item.status = data.status
     if data.outcome:
         item.outcome = data.outcome
     if data.notes:
         item.notes = data.notes
+    if previous!=data.status or data.outcome.strip():
+        from app.operations import CaseEvent
+        s.add(CaseEvent(school_id=ctx["sid"],case_id=item.case_id,
+            author_user_id=ctx["uid"],kind="decision",
+            note="Hearing status: "+previous+" → "+data.status+
+                 (". Outcome recorded by authorised staff." if data.outcome.strip() else "")))
     m.log(s, ctx, "update", "hearing", item.id); s.commit()
     return {"id": item.id, "status": item.status, "outcome": item.outcome}
 
