@@ -36,7 +36,7 @@ def seed():
 def inspect(playwright,role):
     email=(slug if role=="school_admin" else role+"-"+slug)+"@example.test"
     browser=playwright.chromium.launch(headless=True)
-    context=browser.new_context(viewport={"width":390,"height":844})
+    context=browser.new_context(viewport={"width":1280,"height":800})
     page=context.new_page()
     page.goto(BASE,wait_until="networkidle")
     page.locator("#school-slug").fill(slug)
