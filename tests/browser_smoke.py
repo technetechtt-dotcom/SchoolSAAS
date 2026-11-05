@@ -10,7 +10,8 @@ from playwright.sync_api import sync_playwright
 url=os.getenv("SCHOOLCARE_URL","http://127.0.0.1:8000")
 slug="browser-"+uuid4().hex[:12]
 with sync_playwright() as playwright:
-    browser=playwright.chromium.launch(headless=True)
+    engine=os.getenv("BROWSER_ENGINE","chromium")
+    browser=getattr(playwright,engine).launch(headless=True)
     page=browser.new_page(viewport={"width":1280,"height":800})
     page.on("pageerror", lambda error: print("BROWSER JAVASCRIPT ERROR:", str(error), flush=True))
     page.on("console", lambda message: print("BROWSER CONSOLE:",message.text,flush=True) if message.type=="error" else None)
