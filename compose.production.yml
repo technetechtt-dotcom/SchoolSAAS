@@ -34,7 +34,9 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      BILLING_GATEWAY: none
+      BILLING_GATEWAY: ${BILLING_GATEWAY:-none}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_WEBHOOK_SECRET: ${PAYSTACK_WEBHOOK_SECRET:-}
     volumes:
       - evidence_data:/srv/storage/evidence
       - letter_data:/srv/storage/letters
