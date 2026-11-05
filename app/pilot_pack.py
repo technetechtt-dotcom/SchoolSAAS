@@ -133,6 +133,7 @@ class ParentDispute(m.Base):
 
 class PaymentEvent(m.Base):
     __tablename__ = "payment_events"
+    __table_args__ = (UniqueConstraint("provider", "external_ref"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"), index=True)
     invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"), index=True)
@@ -175,13 +176,17 @@ def billing_gateway_status() -> dict:
     provider = (os.getenv("BILLING_GATEWAY") or "none").strip().lower()
     secret = (os.getenv("BILLING_WEBHOOK_SECRET") or "").strip()
     connected = provider == "sandbox" and bool(secret)
+    production_ready = provider not in {"", "none", "sandbox"} and bool(secret)
     return {
         "provider": provider if provider != "none" else None,
         "connected": connected,
+        "production_payments_enabled": False,  # live provider not connected in this build
         "message": (
-            "Sandbox gateway accepts checkout + signed webhook confirmation only."
+            "Sandbox only — production card processing remains disabled until a verified provider is connected."
             if connected else
-            "Set BILLING_GATEWAY=sandbox and BILLING_WEBHOOK_SECRET to enable payment confirmation."
+            "Payment processing disabled. Set BILLING_GATEWAY=sandbox and BILLING_WEBHOOK_SECRET for sandbox tests only."
+            if not production_ready else
+            "Unknown provider configured; live settlement is still disabled in this build."
         ),
     }
 
@@ -276,7 +281,8 @@ class InvoiceIn(BaseModel):
 class SandboxWebhookIn(BaseModel):
     invoice_id: int
     event: str = Field(default="payment.succeeded", max_length=60)
-    external_ref: str | None = Field(default=None, max_length=120)
+    external_ref: str = Field(min_length=4, max_length=120)
+    school_id: int | None = None
 
 
 class RetentionIn(BaseModel):
@@ -769,10 +775,12 @@ def start_checkout(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.re
 def sandbox_webhook(data: SandboxWebhookIn, s: Session = Depends(m.db),
                     x_billing_webhook_secret: str | None = Header(default=None),
                     ctx=Depends(m.current)):
-    """Confirm payment via gateway secret or platform operator. Staff cannot self-claim payment."""
+    """Confirm sandbox payment only with matching checkout reference. Never processes live card payments."""
     gw = billing_gateway_status()
     if not gw["connected"]:
-        raise HTTPException(503, "Sandbox gateway is not configured")
+        raise HTTPException(503, "Sandbox gateway is not configured — production payment processing is disabled")
+    if (os.getenv("BILLING_GATEWAY") or "").strip().lower() not in {"sandbox"}:
+        raise HTTPException(503, "Only the sandbox gateway is enabled in this build")
     secret = (os.getenv("BILLING_WEBHOOK_SECRET") or "").strip()
     authorised = bool(secret and x_billing_webhook_secret and secrets.compare_digest(x_billing_webhook_secret, secret))
     if not authorised:
@@ -783,20 +791,31 @@ def sandbox_webhook(data: SandboxWebhookIn, s: Session = Depends(m.db),
             authorised = False
     if not authorised:
         raise HTTPException(403, "Sandbox webhook requires X-Billing-Webhook-Secret or platform administrator")
-    item = s.get(Invoice, data.invoice_id)
-    if not item:
-        raise HTTPException(404, "Invoice not found")
-    if item.status in {"paid", "paid_gateway"}:
-        return {"id": item.id, "status": item.status, "message": "Already reconciled", "subscription_activated": False}
     if data.event != "payment.succeeded":
         raise HTTPException(400, "Unsupported sandbox event")
-    external = data.external_ref or item.payment_ref or f"sandbox_evt_{secrets.token_hex(8)}"
+    q = select(Invoice).where(Invoice.id == data.invoice_id)
+    if data.school_id is not None:
+        q = q.where(Invoice.school_id == data.school_id)
+    item = s.scalar(q)
+    if not item:
+        raise HTTPException(404, "Invoice not found")
+    if item.status in {"paid", "paid_gateway", "paid_manual"}:
+        return {"id": item.id, "status": item.status, "message": "Already reconciled", "subscription_activated": False}
+    if item.status != "awaiting_payment" or not (item.payment_ref or "").strip():
+        raise HTTPException(409, "Invoice must complete checkout and have a payment reference before settlement")
+    if not secrets.compare_digest(data.external_ref, item.payment_ref):
+        raise HTTPException(409, "Payment reference does not match the active checkout for this invoice")
+    prior = s.scalar(select(PaymentEvent).where(
+        PaymentEvent.provider == "sandbox", PaymentEvent.external_ref == data.external_ref))
+    if prior:
+        return {"id": item.id, "status": item.status, "message": "Duplicate payment event ignored",
+                "subscription_activated": False}
     item.status = "paid_gateway"
     item.gateway = "sandbox"
-    item.payment_ref = external
     item.paid_at = datetime.now(timezone.utc)
     s.add(PaymentEvent(school_id=item.school_id, invoice_id=item.id, provider="sandbox",
-                       event_type=data.event, external_ref=external, payload=f"invoice:{item.id}"))
+                       event_type=data.event, external_ref=data.external_ref,
+                       payload=f"invoice:{item.id}:school:{item.school_id}"))
     school = s.get(m.School, item.school_id)
     activated = False
     if school and (school.plan or "trial") in {"trial", "free", ""}:
@@ -814,11 +833,10 @@ def mark_paid(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.current
     # School administrators cannot grant themselves paid subscription status.
     # Reconciliation by a separate platform operator is required.
     platform_user(s, ctx)
+    # Platform operators may reconcile only within the active school workspace.
     item = s.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.school_id == ctx["sid"]))
     if not item:
-        item = s.get(Invoice, invoice_id)
-    if not item:
-        raise HTTPException(404, "Invoice not found")
+        raise HTTPException(404, "Invoice not found in the active school workspace")
     if item.status not in {"issued", "awaiting_payment"}:
         raise HTTPException(409, "Invoice already reconciled or closed")
     item.status = "paid_manual"

@@ -5,12 +5,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-os.environ["JWT_SECRET"] = "workflow-repair-test-secret-key-32c"
-os.environ["SCHEMA_AUTO_CREATE"] = "true"
-os.environ["MFA_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-os.environ["PLATFORM_ADMIN_EMAILS"] = "admin@repair.test"
-os.environ["BILLING_GATEWAY"] = "sandbox"
-os.environ["BILLING_WEBHOOK_SECRET"] = "sandbox-webhook-secret-value"
+os.environ.setdefault("JWT_SECRET", "workflow-repair-test-secret-key-32c")
+os.environ.setdefault("SCHEMA_AUTO_CREATE", "true")
+os.environ.setdefault("MFA_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+# Do not set PLATFORM_ADMIN_EMAILS / BILLING_* at import time — that pollutes sibling tests.
 os.environ.pop("SMTP_HOST", None)
 
 from app import main
@@ -40,6 +38,9 @@ def test_parent_invite_token_notice_ack_dispute_and_evidence_download():
         return getattr(c, method)(path, json=body or {}, headers={"X-CSRF-Token": c.cookies.get("csrf_token", "")})
 
     try:
+        os.environ["PLATFORM_ADMIN_EMAILS"] = "admin@repair.test"
+        os.environ["BILLING_GATEWAY"] = "none"
+        os.environ.pop("BILLING_WEBHOOK_SECRET", None)
         assert send("/api/register", {
             "school_name": "Repair School", "slug": "repair-school",
             "email": "admin@repair.test", "password": "demo-password-123456"
@@ -123,15 +124,38 @@ def test_parent_invite_token_notice_ack_dispute_and_evidence_download():
         checkout_resp = send(f"/api/billing/invoices/{invc['id']}/checkout", {})
         assert checkout_resp.status_code == 200, checkout_resp.text
         assert checkout_resp.json()["status"] == "awaiting_payment"
+        pref = checkout_resp.json()["payment_ref"]
+        assert send("/api/billing/webhooks/sandbox", {
+            "invoice_id": invc["id"], "event": "payment.succeeded"}).status_code == 422
+        bad_ref = c.post("/api/billing/webhooks/sandbox",
+                         json={"invoice_id": invc["id"], "event": "payment.succeeded",
+                               "external_ref": "wrong-ref", "school_id": c.get("/api/me").json()["sid"]},
+                         headers={"X-CSRF-Token": c.cookies.get("csrf_token", ""),
+                                  "X-Billing-Webhook-Secret": "sandbox-webhook-secret-value"})
+        assert bad_ref.status_code == 409
         paid_resp = c.post("/api/billing/webhooks/sandbox",
-                           json={"invoice_id": invc["id"], "event": "payment.succeeded"},
+                           json={"invoice_id": invc["id"], "event": "payment.succeeded",
+                                 "external_ref": pref, "school_id": c.get("/api/me").json()["sid"]},
                            headers={"X-CSRF-Token": c.cookies.get("csrf_token", ""),
                                     "X-Billing-Webhook-Secret": "sandbox-webhook-secret-value"})
         assert paid_resp.status_code == 200, paid_resp.text
         paid = paid_resp.json()
         assert paid["status"] == "paid_gateway"
         assert paid["subscription_activated"] is True
+        replay = c.post("/api/billing/webhooks/sandbox",
+                        json={"invoice_id": invc["id"], "event": "payment.succeeded",
+                              "external_ref": pref, "school_id": c.get("/api/me").json()["sid"]},
+                        headers={"X-CSRF-Token": c.cookies.get("csrf_token", ""),
+                                 "X-Billing-Webhook-Secret": "sandbox-webhook-secret-value"})
+        assert replay.status_code == 200
+        assert replay.json()["subscription_activated"] is False
         assert c.get("/api/subscription").json()["plan"] == "standard"
+
+        # Case status PATCH cannot close without checklist
+        case_early = send("/api/cases", {
+            "learner_id": learner["id"], "title": "Early close attempt",
+            "incident_ids": [incident["id"]]}).json()
+        assert send(f"/api/cases/{case_early['id']}", {"status": "closed"}, "patch").status_code == 400
 
         # MFA enable refreshes status on /api/me
         setup = send("/api/mfa/setup", {}).json()

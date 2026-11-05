@@ -564,8 +564,18 @@ async function openAction(action,id){
  case "create-incident":name="Report incident";kind="incidents";body=await learnerPicker()+options("offence_id","Offence",(await schoolOffences()).map(x=>[x.id,x.code+" · "+x.name]))+options("location","Location",["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"].map(x=>[x,x]))+area("description","Description")+options("immediate_action","Immediate action",["Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x]));break;
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
  case "create-case":{name="New case";kind="cases";const i=await api("incidents");body=await learnerPicker()+input("title","Case title","text","","required")+"<div><label>Linked incidents</label><div class=\"stack\" id=\"case-incident-choices\">"+i.map(x=>"<label><input style=\"width:auto;min-height:auto\" type=\"checkbox\" name=\"linked_incident\" value=\""+esc(x.id)+"\" data-learner=\""+esc(x.learner_id)+"\"> Incident #"+esc(x.id)+"</label>").join("")+"</div><p class=\"subtle\">Select incidents for the chosen learner; only matching incidents will be shown.</p></div>";break;}
- case "edit-case":data=await api("cases/"+id);name="Update case";kind="case-status:"+id;body=options("status","Case status",["open","monitoring","hod_review","smt_review","formal_process","awaiting_outcome","closed","reopened"].map(x=>[x,x]),data.status);break;
- case "close-case":await api("cases/"+id+"/close","POST",{});toast("Case closed");navigate("cases/"+id);return;
+ case "edit-case":{
+  data=await api("cases/"+id);
+  const statuses=data.status==="closed"
+   ?[["reopened","reopened"]]
+   :["open","monitoring","hod_review","smt_review","formal_process","awaiting_outcome","reopened"].filter(x=>x!=="closed").map(x=>[x,x]);
+  name="Update case status";kind="case-status:"+id;
+  body="<p class=\"subtle\">Closure requires the checklist via <strong>Close case</strong> — not this status list.</p>"+
+   options("status","Case status",statuses,data.status);
+  break;}
+ case "close-case":
+  if(!confirm("Close this case? The closure checklist must already be complete."))return;
+  await api("cases/"+id+"/close","POST",{});toast("Case closed");navigate("cases/"+id);return;
  case "assign-case":name="Assign case";kind="case-assignment:"+id;body=options("assigned_user_id","Staff member",[[0,"Unassigned"],...(await api("case-assignees")).map(x=>[x.user_id,x.label])]);break;
  case "invite":name="Invite staff";kind="invitations";body=input("email","Staff email","email","","required")+options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]))+input("assigned_class","Assigned class (educator)");break;
  case "edit-member":data=(await api("members")).find(x=>String(x.id)===String(id));if(!data)throw Error("Staff member not found");name="Edit staff permissions";kind="member-update:"+id;body=options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]),data.role)+options("active","Account status",[["true","Active"],["false","Deactivated"]],String(data.active))+input("assigned_class","Assigned class", "text",data.assigned_class||"");break;
@@ -605,7 +615,12 @@ async function openAction(action,id){
  case "view-evidence":await openEvidence(id,"inline");return;
  case "download-evidence":await openEvidence(id,"attachment");return;
  case "start-checkout":{const r=await api("billing/invoices/"+id+"/checkout","POST",{});toast(r.message||"Checkout started");navigate("billing");return}
- case "simulate-pay":{const r=await api("billing/webhooks/sandbox","POST",{invoice_id:Number(id),event:"payment.succeeded"});toast(r.message||"Payment reconciled");navigate("billing");return}
+ case "simulate-pay":{
+  const invoices=await api("billing/invoices");
+  const inv=invoices.find(x=>String(x.id)===String(id));
+  if(!inv||!inv.payment_ref){toast("Checkout payment reference required before settlement",true);return}
+  const r=await api("billing/webhooks/sandbox","POST",{invoice_id:Number(id),event:"payment.succeeded",external_ref:inv.payment_ref,school_id:user.sid});
+  toast(r.message||"Payment reconciled");navigate("billing");return}
  case "resolve-dispute":name="Resolve parent dispute";kind="dispute-resolve:"+id;body=options("status","Resolution",[["resolved","Resolved"],["upheld","Upheld — notice withdrawn"],["rejected","Rejected"]])+area("resolution_notes","Notes");break;
  case "mfa-setup":data=await api("mfa/setup","POST",{});modal("MFA setup",panel('<p class="subtle">Add this secret to your authenticator app, then enable MFA.</p><p><code>'+esc(data.secret)+'</code></p><p class="subtle">'+esc(data.otpauth_uri)+'</p>'));return;
  case "mfa-enable":name="Enable MFA";kind="mfa/enable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
@@ -638,6 +653,11 @@ async function openAction(action,id){
  if(action==="create-case"){const update=()=>{const learner=$("modal-body").querySelector("[name=learner_id]").value;$("modal-body").querySelectorAll("[name=linked_incident]").forEach(ch=>{ch.parentElement.hidden=ch.dataset.learner!==learner;if(ch.dataset.learner!==learner)ch.checked=false})};$("modal-body").querySelector("[name=learner_id]").addEventListener("change",update);update()}
 }
 async function submitForm(f){
+ if(f.dataset.busy==="1")return;
+ f.dataset.busy="1";
+ const submitBtn=f.querySelector('button[type="submit"]');
+ if(submitBtn){submitBtn.dataset.label=submitBtn.dataset.label||submitBtn.textContent;submitBtn.disabled=true;submitBtn.textContent="Saving…"}
+ try{
  let k=f.dataset.form,data=getData(f),url=k,method="POST",go=path().split("/")[0];
  const split=k.split(":");const id=split[1];const prefix=split[0];
  const intFields=["learner_id","offence_id","incident_id","severity","case_id","repeat_threshold","assigned_user_id"];
@@ -745,6 +765,8 @@ async function submitForm(f){
  if(k==="learners"&&result.admission_no){toast("Learner saved · admission "+result.admission_no);unsaved=false;navigate(go);return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}
+ }catch(e){toast(e.message,true)}
+ finally{f.dataset.busy="0";if(submitBtn){submitBtn.disabled=false;submitBtn.textContent=submitBtn.dataset.label||"Save"}}
 }
 async function openEvidence(id,disposition){
  const response=await fetch("/api/evidence/"+id+"/download?disposition="+encodeURIComponent(disposition||"attachment"),{

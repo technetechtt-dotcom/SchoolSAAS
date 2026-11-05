@@ -729,14 +729,37 @@ def patch_incident(incident_id:int,data:ReviewPatch,s:Session=Depends(db),ctx=De
     if data.status in ('resolved','withdrawn'):i.status=data.status
     log(s,ctx,'review','incident',i.id);s.commit();return {'ok':True}
 
+# Formal case transitions (closure is checklist-only via POST /cases/{id}/close).
+CASE_TRANSITIONS = {
+    'open': {'monitoring', 'hod_review', 'smt_review', 'formal_process', 'reopened'},
+    'monitoring': {'open', 'hod_review', 'smt_review', 'formal_process'},
+    'hod_review': {'monitoring', 'smt_review', 'formal_process', 'awaiting_outcome'},
+    'smt_review': {'hod_review', 'formal_process', 'awaiting_outcome'},
+    'formal_process': {'awaiting_outcome', 'smt_review'},
+    'awaiting_outcome': {'monitoring', 'smt_review', 'formal_process'},
+    'reopened': {'monitoring', 'hod_review', 'smt_review', 'formal_process'},
+    'closed': set(),  # closed cases cannot be changed via PATCH
+}
+
 @app.patch('/api/cases/{case_id}')
 def patch_case(case_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
-    if data.status not in ('open','monitoring','hod_review','smt_review','formal_process','awaiting_outcome','closed','reopened'):
+    if data.status == 'closed':
+        raise HTTPException(400, 'Use POST /api/cases/{id}/close after completing the closure checklist')
+    if data.status not in ('open','monitoring','hod_review','smt_review','formal_process','awaiting_outcome','reopened'):
         raise HTTPException(400,'Invalid status')
     c=s.scalar(select(Case).where(Case.id==case_id,Case.school_id==ctx['sid']))
     if not c:raise HTTPException(404,'Case not found')
     before=c.status
     if before == data.status:return {'ok':True}
+    if before == 'closed':
+        if data.status != 'reopened':
+            raise HTTPException(409, 'Closed cases may only be reopened, not moved to other statuses')
+        if ctx['role'] not in ('school_admin', 'principal', 'smt'):
+            raise HTTPException(403, 'Only school leadership may reopen a closed case')
+    else:
+        allowed = CASE_TRANSITIONS.get(before, set())
+        if data.status not in allowed:
+            raise HTTPException(409, f'Invalid case transition from {before} to {data.status}')
     from app.operations import CaseEvent
     c.status=data.status
     s.add(CaseEvent(school_id=ctx['sid'],case_id=c.id,author_user_id=ctx['uid'],

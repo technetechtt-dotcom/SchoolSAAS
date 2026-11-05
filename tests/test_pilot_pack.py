@@ -6,10 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-os.environ["JWT_SECRET"] = "pilot-pack-test-secret-key-32chars"
-os.environ["SCHEMA_AUTO_CREATE"] = "true"
-os.environ["MFA_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-os.environ["PLATFORM_ADMIN_EMAILS"] = "admin@school.test"
+os.environ.setdefault("JWT_SECRET", "pilot-pack-test-secret-key-32chars")
+os.environ.setdefault("SCHEMA_AUTO_CREATE", "true")
+os.environ.setdefault("MFA_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.pop("SMTP_HOST", None)
 
 from app import main
@@ -33,6 +32,9 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
         return getattr(c, method)(path, json=body or {}, headers={"X-CSRF-Token": c.cookies.get("csrf_token", "")})
 
     try:
+        os.environ["PLATFORM_ADMIN_EMAILS"] = "admin@school.test"
+        os.environ["BILLING_GATEWAY"] = "none"
+        os.environ.pop("BILLING_WEBHOOK_SECRET", None)
         assert send("/api/register", {
             "school_name": "Pilot School", "slug": "pilot-school",
             "email": "admin@school.test", "password": "demo-password-123456"
