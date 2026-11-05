@@ -302,6 +302,19 @@ def startup():
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
 
+@app.get('/healthz', include_in_schema=False)
+def healthz():
+    return {'status':'ok'}
+
+@app.get('/readyz', include_in_schema=False)
+def readyz():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1 FROM schools LIMIT 1"))
+        return {'status':'ready'}
+    except Exception:
+        raise HTTPException(503,'Database is not ready')
+
 def db():
     with SessionLocal() as s: yield s
 
