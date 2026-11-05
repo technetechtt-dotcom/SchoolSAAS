@@ -112,16 +112,16 @@ const $=x=>document.getElementById(x), esc=x=>String(x??"").replace(/[&<>"']/g,c
 const csrf=()=>decodeURIComponent(document.cookie.split("; ").find(x=>x.startsWith("csrf_token="))?.split("=")[1]||"");
 let user=null, unsaved=false, records={};
 const groups=[
- ["WORKSPACE",[["dashboard","Overview"],["notifications","Notifications"],["tasks","Review tasks"]]],
+ ["WORKSPACE",[["dashboard","Overview"],["guide","What do I do?"],["notifications","Notifications"],["tasks","Review tasks"]]],
  ["LEARNERS",[["learners","Learners"],["classes","Grades & classes"],["class-assignments","Class assignments"]]],
- ["BEHAVIOUR",[["incidents","Incidents"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"],["hearings","Hearings"],["evidence","Evidence"]]],
+ ["BEHAVIOUR",[["incidents","Incidents"],["codes","Offence codes"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"],["hearings","Hearings"],["evidence","Evidence"]]],
  ["COMMUNICATION",[["contacts","Parent contacts"],["guardians","Guardians"],["appointments","Meetings"],["documents","Document drafts"],["letters","Letter templates"],["parent-acks","Parent acknowledgements"]]],
  ["ANALYTICS",[["reports","Reports"]]],
  ["ADMINISTRATION",[["offences","Offences"],["conduct","Code of Conduct"],["staff","Staff & access"],["settings","Settings"],["security","Security & MFA"],["privacy","Privacy & retention"],["subscription","Subscription"],["billing","Billing"],["platform","Platform"],["audit","Audit log"]]]
 ];
 const manager=()=>user&&["school_admin","principal","smt","hod"].includes(user.role);
 const admin=()=>user&&["school_admin","principal"].includes(user.role);
-const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments","hearings","evidence","letters","parent-acks","conduct"].includes(key)||manager();
+const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments","hearings","evidence","letters","parent-acks","conduct"].includes(key)||manager()||key==="guide";
 const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","security","privacy","billing","platform"].includes(key)||admin())&&(key!=="platform"||user.platform_admin);
 const input=(name,label,type="text",value="",extra="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><input id="field-'+esc(name)+'" name="'+esc(name)+'" type="'+esc(type)+'" value="'+esc(value)+'" '+extra+'></div>';
 const area=(name,label,value="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><textarea id="field-'+esc(name)+'" name="'+esc(name)+'">'+esc(value)+'</textarea></div>';
@@ -164,16 +164,59 @@ const learnerPicker=async()=>{const d=await api("directory/learners?limit=50");r
 function bindLearnerPicker(){const input=$("modal-body").querySelector("#learner-search-field"),select=$("modal-body").querySelector('[name="learner_id"]');if(!input||!select)return;let counter=0;input.addEventListener("input",async()=>{const seq=++counter;const q=input.value;try{const d=await api("directory/learners?limit=50&q="+encodeURIComponent(q));if(seq!==counter)return;select.innerHTML=d.items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name+" · "+x.class_name)+'</option>').join("");select.disabled=d.items.length===0;select.dispatchEvent(new Event("change"))}catch(e){toast(e.message,true)}})}
 
 let directoryState={q:"",grade:"",offset:0,total:0};
+let recPref={type:"",incidentId:"",notes:""};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
- if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
- const [d,n,stats]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview")]);
- $("page").innerHTML=head("Good day, "+d.school,"A clear view of learner support — celebrate progress and act where it helps",btn("Report incident","create-incident","",false))+
+ if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
+ const [d,n,stats,warn,hot,reps,irec]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations")]);
+ $("page").innerHTML=head("Good day, "+d.school,"Capture once — history, reviews, interventions and trends update automatically",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+
  '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
- '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Incident locations")+
+ '<div class="cards"><div class="metric"><small>Early warning · overdue interventions</small><strong>'+warn.counts.overdue_interventions+'</strong></div><div class="metric"><small>Outstanding parent meetings</small><strong>'+warn.counts.overdue_appointments+'</strong></div><div class="metric"><small>Auto intervention needs</small><strong>'+esc((irec.counts&&irec.counts.learners_flagged)||0)+'</strong></div><div class="metric"><small>Serious / open reviews</small><strong>'+warn.counts.serious_open+' / '+warn.counts.open_reviews+'</strong></div></div>'+
+ '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(hot.by_location||d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Hotspots · locations ("+esc(hot.window_days)+" days)")+
  panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>'+
  '<div class="cards"><div class="metric"><small>Repeat-behaviour rate</small><strong>'+stats.repeat_rate+'%</strong></div><div class="metric"><small>Interventions recorded</small><strong>'+stats.interventions+'</strong></div><div class="metric"><small>Pending reviews</small><strong>'+stats.pending_reviews+'</strong></div></div>'+
- '<div class="grid2">'+panel(bars(stats.months),"Monthly trend")+panel(bars(stats.severity),"Severity levels")+'</div>';
+ '<div class="grid2">'+panel(bars(stats.months),"Monthly trend")+panel(bars(stats.severity),"Severity levels")+'</div>'+
+ '<div class="grid2">'+panel(bars(hot.by_class||{}),"Hotspots · classes")+
+ panel(table(["Learner","Grade","Similar","Status"],(reps.items||[]).slice(0,8).map(x=>[link(x.name,"learners",x.learner_id),plain(x.grade),plain(x.similar_count+" · "+x.offence),pill(x.status)])),"Repeat offences board")+'</div>'+
+ panel(table(["Learner","Grade","Priority","Suggested intervention","Signals"],(irec.items||[]).slice(0,10).map(x=>[
+  link(x.name,"learners",x.learner_id),plain(x.grade),pill(x.top_priority),plain(x.top_title),
+  plain(x.recommendation_count+" · "+x.top_type)])),"Auto-detected intervention needs")+
+ '<p class="subtle" style="margin:4px 12px 0">'+esc(irec.notice||"Advisory recommendations from behaviour, EQ, formal cognitive notes and incidents.")+'</p>';
+}
+async function guidePage(){
+ const g=await api("guide");
+ $("page").innerHTML=head(g.headline,g.principle,btn("Report incident","create-incident","",false))+
+ panel('<p class="subtle">'+esc(g.role_note)+'</p><div class="stack">'+g.steps.map(s=>'<div class="notice"><strong>'+esc(s.title)+'</strong><br>'+esc(s.detail)+'</div>').join("")+'</div>',"Progressive discipline steps")+
+ panel('<ul class="subtle">'+g.must_not.map(x=>'<li>'+esc(x)+'</li>').join("")+'</ul>',"What this system must not do");
+}
+async function offenceCodesPage(){
+ const levels={1:"Level 1 · Minor",2:"Level 2 · Moderate",3:"Level 3 · Serious",4:"Level 4 · Critical"};
+ const rows=await api("offences");
+ const byCat={};
+ rows.forEach(o=>{const k=o.category||"General";(byCat[k]=byCat[k]||[]).push(o)});
+ const manage=btn("Manage catalogue","go-offences");
+ let body=head("Offence codes","Quick reference — what each code means when reporting an incident",
+  btn("Report incident","create-incident","",false)+(admin()||user.role==="smt"?manage:""))+
+  panel('<p class="subtle">Educators select a code; the system applies the default level and review flags. Codes do not decide punishment.</p>'+
+  '<div class="search-row"><input id="code-query" type="search" placeholder="Search code, name or category" aria-label="Search offence codes"></div><div id="code-results"></div>');
+ $("page").innerHTML=body;
+ function draw(list){
+  const groups=Object.keys(byCat).sort();
+  const filtered=new Set(list.map(x=>x.id));
+  const html=groups.map(cat=>{
+   const items=(byCat[cat]||[]).filter(x=>filtered.has(x.id));
+   if(!items.length)return "";
+   return panel(table(["Code","What it means","Level","Escalation","Similarity group"],
+    items.map(o=>[plain(o.code),'<strong>'+esc(o.name)+'</strong>',pill(levels[o.severity]||("Level "+o.severity)),
+     plain([o.escalate_hod?"HOD":"",o.escalate_smt?"SMT":""].filter(Boolean).join(" · ")||"Classroom / record"),
+     plain(o.similarity_group||"—")])),cat);
+  }).join("")||'<div class="empty">No offence codes match your search.</div>';
+  $("code-results").innerHTML=html;
+ }
+ draw(rows);
+ let t; $("code-query").addEventListener("input",e=>{clearTimeout(t);const q=e.target.value.trim().toLowerCase();t=setTimeout(()=>{
+  draw(!q?rows:rows.filter(o=>[o.code,o.name,o.category,o.similarity_group].join(" ").toLowerCase().includes(q)));
+ },150)});
 }
 async function learnerDirectory(){
  const state=directoryState;
@@ -271,9 +314,54 @@ async function details(key,id){
  const d=await api(key+"/"+id);
  const breadcrumb='<div class="crumbs">'+link("← All "+key,key)+'</div>';
  if(key==="learners"){
- const items=[["Admission",d.admission_no],["Grade",d.grade],["Class",d.class_name],["Status",d.active?"Active":"Inactive"]];
- let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,user.role==="educator"?"":btn("Edit learner","edit-learner",d.id));
+ const items=[["Admission",d.admission_no],["Grade",d.grade],["Class",d.class_name],["Status",d.active?"Active":"Inactive"],
+  ["Started grade",d.grade_started||"—"],["Enrolled from",d.enrolled_on||"—"]];
+ let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,user.role==="educator"?"":btn("Edit learner","edit-learner",d.id)+(manager()?btn("Add journey note","add-observation",d.id):""));
  content+=panel(table(["Field","Value"],items.map(x=>[plain(x[0]),plain(x[1])])),"Learner information");
+ if(manager()||user.role==="educator"){
+  try{
+   const j=await api("learners/"+d.id+"/journey");
+   content+='<p class="subtle" style="margin:8px 12px 0">'+esc(j.notice||"")+'</p>';
+   content+='<div class="cards"><div class="metric"><small>Journey from</small><strong>Grade '+esc(j.grade_started||"1")+'</strong></div>'+
+    '<div class="metric"><small>School factors</small><strong>'+esc((j.factor_summary||{}).school||0)+'</strong></div>'+
+    '<div class="metric"><small>Home factors</small><strong>'+esc((j.factor_summary||{}).home||0)+'</strong></div>'+
+    '<div class="metric"><small>Both / unclear</small><strong>'+esc(((j.factor_summary||{}).both||0)+((j.factor_summary||{}).unknown||0))+'</strong></div></div>';
+   const progressRows=Object.entries(j.progress||{}).map(([dom,p])=>{
+    const latest=p.latest||{};
+    return [plain(p.label||dom),pill(latest.level||"—"),plain(latest.grade?("Gr "+latest.grade):"—"),
+      plain(latest.score!=null?String(latest.score):"—"),pill(latest.factor||"—"),plain(latest.title||"—")];
+   });
+   content+=panel(table(["Domain","Latest level","Grade","Score","Factor","Note"],progressRows),"Learning & EQ progress (Grade 1 → now)");
+   if((j.insights||[]).length)content+=panel(table(["Theme","Signal","Understanding question","Hint"],
+    j.insights.map(x=>[plain(x.theme),plain(x.signal),plain(x.ask),pill(x.factor_hint)])),"Why might this child struggle?");
+   try{
+    const rec=await api("learners/"+d.id+"/intervention-recommendations");
+    const recRows=(rec.recommendations||[]).map(x=>[
+      pill(x.priority),plain(x.title),plain(x.intervention_type),plain(x.rationale),
+      pill(x.factor_focus||"—"),plain(x.owner_hint),plain("≤"+x.urgency_days+"d"),
+      manager()?btn("Accept","accept-recommendation",d.id+"|"+encodeURIComponent(x.intervention_type)+"|"+(x.suggested_incident_id||"")):"—"
+    ]);
+    content+=panel(
+      '<p class="subtle">'+esc(rec.notice||"")+'</p>'+
+      '<div class="cards"><div class="metric"><small>Suggested</small><strong>'+esc((rec.counts&&rec.counts.total)||0)+'</strong></div>'+
+      '<div class="metric"><small>Critical</small><strong>'+esc((rec.counts&&rec.counts.critical)||0)+'</strong></div>'+
+      '<div class="metric"><small>High</small><strong>'+esc((rec.counts&&rec.counts.high)||0)+'</strong></div></div>'+
+      table(["Priority","Recommendation","Type","Why","Focus","Owner","Due","Action"],recRows),
+      "Recommended interventions (auto-detected)");
+   }catch(re){content+=panel('<p class="subtle">Recommendations unavailable: '+esc(re.message)+'</p>',"Recommended interventions")}
+   content+=panel(table(["When","Type","Grade","Title","Level","School / home"],
+    (j.timeline||[]).slice().reverse().map(x=>[plain((x.at||"").slice(0,10)),pill(x.kind),plain(x.grade||"—"),plain(x.title),
+      plain(x.level||"—"),pill(x.factor||"—")])),"Lifelong learner journey");
+  }catch(e){content+=panel('<p class="subtle">Journey timeline unavailable: '+esc(e.message)+'</p>',"Learner journey")}
+ }
+ if(manager()){
+  const profile=await api("learners/"+d.id+"/discipline-profile");
+  content+='<div class="cards"><div class="metric"><small>Discipline status</small><strong>'+esc(profile.status)+'</strong></div><div class="metric"><small>Incidents ('+esc(profile.window_days)+'d)</small><strong>'+esc(profile.totals.incidents_window)+'</strong></div><div class="metric"><small>Open cases / reviews</small><strong>'+esc(profile.totals.open_cases)+" / "+esc(profile.totals.open_reviews)+'</strong></div></div>';
+  content+=panel(bars(profile.totals.by_level||{}),"Incidents by level (window)");
+  content+=panel(table(["Offence","Count"],(profile.repeated_behaviours||[]).map(x=>[plain(x.offence),plain(x.count)])),"Repeated behaviours");
+  content+=panel(table(["Type","Outcome","Due"],(profile.interventions||[]).map(x=>[plain(x.type),pill(x.outcome),plain(x.due_at?x.due_at.slice(0,10):"—")])),"Interventions");
+  content+=panel(table(["Method","Purpose","Outcome","Date"],(profile.parent_contacts||[]).map(x=>[plain(x.method),plain(x.purpose),plain(x.outcome),plain(x.created_at.slice(0,10))])),"Parent contacts");
+ }
  if(d.incidents)content+=panel(table(["Incident","Location","Status","Date"],d.incidents.map(x=>[link("#"+x.id,"incidents",x.id),plain(x.location),pill(x.status),plain(x.date.slice(0,10))])),"Incident history");
  if(d.cases)content+=panel(table(["Case","Title","Status"],d.cases.map(x=>[link("#"+x.id,"cases",x.id),plain(x.title),pill(x.status)])),"Cases");
  if(manager()){const guardians=await api("guardians?learner_id="+d.id);content+=panel(table(["Name","Relationship","Email","Phone"],guardians.map(x=>[plain(x.name),plain(x.relationship),plain(x.email),plain(x.phone)]))+
@@ -282,8 +370,8 @@ async function details(key,id){
  }
  if(key==="incidents"){
  let actions=manager()?btn("Review incident","review-incident",id):"";
- $("page").innerHTML=breadcrumb+head("Incident #"+id,"Reported "+d.created_at.slice(0,16),actions)+
- panel(table(["Field","Details"],[["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details");return;
+ $("page").innerHTML=breadcrumb+head(d.public_ref||("Incident #"+id),"Reported "+d.created_at.slice(0,16),actions)+
+ panel(table(["Field","Details"],[["Reference",plain(d.public_ref||"#"+id)],["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Flag reason",pill(d.flag_reason||"none")],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details");return;
  }
  if(key==="cases"){
  const [events,tasks]=await Promise.all([api("cases/"+id+"/timeline"),api("cases/"+id+"/follow-ups")]);
@@ -312,8 +400,17 @@ async function reports(filters={}){
  $("clear-reports").onclick=()=>reports({});
 }
 async function settings(){
- const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);$("page").innerHTML=head("School settings","Manage reviewed behaviour thresholds and academic context")+
- panel(jsonForm("settings",input("repeat_threshold","Repeat incident review threshold","number",d.repeat_threshold,'min="2" max="10" required')),"Behaviour review")+
+ const [d,acad]=await Promise.all([api("settings"),api("settings/academic")]);$("page").innerHTML=head("School settings","Configure progressive-discipline reviews — never automatic sanctions")+
+ panel(jsonForm("settings",
+  input("repeat_window_days","Repeat look-back window (days)","number",d.repeat_window_days,'min="7" max="365" required')+
+  input("repeat_similar_threshold","Similar-behaviour review threshold","number",d.repeat_similar_threshold,'min="1" max="20" required')+
+  input("repeat_total_threshold","Total-incidents review threshold","number",d.repeat_total_threshold,'min="1" max="30" required')+
+  input("follow_up_default_days","Default follow-up days","number",d.follow_up_default_days,'min="1" max="60" required')+
+  input("incident_prefix","Incident ID prefix","text",d.incident_prefix,'required maxlength="12"')+
+  input("case_prefix","Case ID prefix","text",d.case_prefix,'required maxlength="12"')+
+  input("admission_prefix","Admission prefix","text",d.admission_prefix,'required maxlength="12"')+
+  '<input type="hidden" name="repeat_threshold" value="'+esc(d.repeat_similar_threshold)+'">'
+ ),"Behaviour review engine")+
  panel(jsonForm("academic",input("academic_year","Academic year","number",acad.academic_year,'min="2020" max="2100" required')+input("term","Current term (1–4)","number",acad.term,'min="1" max="4" required')+input("school_contact_email","School contact email","email",acad.school_contact_email)),"Academic year and school contact");
 }
 async function subscription(){
@@ -373,6 +470,8 @@ async function render(){
  $("page").innerHTML=panel('<p class="subtle">Loading…</p>');
  try{if(id&&["learners","incidents","cases"].includes(key))await details(key,id);
  else if(key==="dashboard")await dashboard();
+ else if(key==="guide")await guidePage();
+ else if(key==="codes")await offenceCodesPage();
  else if(key==="reports")await reports();
  else if(key==="learners")await learnerDirectory();
  else if(key==="cases"||key==="incidents")await paginatedRegister(key);
@@ -403,6 +502,21 @@ async function openAction(action,id){
  case "request-reset":name="Request password reset";kind="account-recovery/request";body=input("email","Account email","email","","required");break;
  case "complete-reset":name="Set new password";kind="account-recovery/complete";body=input("token","Recovery token","text",id,'readonly required')+input("password","New password (12+ characters)","password","",'minlength="12" required');break;
  case "add-guardian":name="Add guardian";kind="guardians";body=input("learner_id","Learner ID","number",id,'readonly')+input("name","Name","text","","required")+input("relationship","Relationship","text","","required")+input("email","Email","email","","required")+input("phone","Phone");break;
+ case "add-observation":{
+  const domains=await api("journey/domains");
+  name="Add journey observation";kind="learner-observation:"+id;
+  body="<p class=\"subtle\">"+esc(domains.notice||"Supportive observation — not a clinical diagnosis.")+"</p>"+
+   input("learner_id","Learner ID","number",id,"readonly")+
+   input("observed_at","Observed on","date","","required")+
+   input("grade_at_time","Grade at time","text","","required placeholder=\"e.g. 1\"")+
+   options("domain","Domain",(domains.domains||[]).map(x=>[x.id,x.label]))+
+   input("title","Short title","text","","required")+
+   area("summary","What was noticed / context")+
+   options("level","Level",(domains.levels||[]).map(x=>[x,x]),"developing")+
+   input("score","Formal score (optional — IQ/EQ assessments only)","number","","min=\"0\" max=\"300\" step=\"0.1\"")+
+   options("contributing_factor","Likely contributing factor",(domains.factors||[]).map(x=>[x,x]),"unknown")+
+   options("source","Source",[["classroom_observation","Classroom observation"],["parent_report","Parent report"],["assessment","Formal assessment"],["support_team","Support team"],["screening","Screening"]].map(x=>[x[0],x[1]]));
+  break;}
  case "add-case-note":name="Record case timeline note";kind="case-timeline:"+id;body=options("kind","Type",["note","meeting","referral","decision","evidence_reference","appeal"].map(x=>[x,x]))+area("note","Note");break;
  case "add-followup":name="Schedule case follow-up";kind="case-followup:"+id;body=input("summary","Task description","text","","required")+input("due_at","Due date and time","datetime-local","","required")+options("owner_user_id","Assigned staff",(await api("case-assignees")).map(x=>[x.user_id,x.label]));break;
  case "update-followup":name="Update follow-up";kind="followup-update:"+id;body=options("status","Status",["open","in_progress","completed","cancelled"].map(x=>[x,x]));break;
@@ -410,7 +524,7 @@ async function openAction(action,id){
  case "import-learners":name="Import learners from CSV";kind="import-learners";body="<p class=\"subtle\">Use fictitious learner data. Required headers: first_name, surname, grade, class_name. Optional: admission_no (auto-generated when blank). Maximum 1,000 rows per batch.</p>"+'<div><label for="bulk-csv">CSV file</label><input id="bulk-csv" name="file" type="file" accept=".csv,text/csv" required></div>';break;
  case "create-learner":name="New learner";kind="learners";body="<p class=\"subtle\">Admission number is assigned automatically (ADM-00001 format).</p>"+input("first_name","First name","text","","required")+input("surname","Surname","text","","required")+input("grade","Grade","text","","required placeholder=\"e.g. 7\"")+input("class_name","Class","text","","required placeholder=\"e.g. 7A\"");break;
  case "edit-learner":data=await api("learners/"+id);name="Edit learner";kind="learner-update:"+id;body=input("grade","Grade","text",data.grade,"required")+input("class_name","Class","text",data.class_name,"required")+options("active","Status",[["true","Active"],["false","Inactive"]],String(data.active));break;
- case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]]);break;
+ case "create-offence":name="New offence";kind="offences";body=input("code","Code","text","","required")+input("name","Offence","text","","required")+input("category","Category","text","","required")+options("severity","Default level",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]])+options("escalate_hod","Escalate to HOD",[["false","No"],["true","Yes"]])+options("escalate_smt","Escalate to SMT",[["false","No"],["true","Yes"]])+input("similarity_group","Similarity group (optional)","text","","placeholder=\"e.g. punctuality\"")+input("repeat_threshold","Per-offence repeat threshold (optional)","number","","min=\"1\" max=\"20\"");break;
  case "edit-offence":data=(await api("offences")).find(x=>String(x.id)===String(id));if(!data)throw Error("Offence not found");name="Edit unused offence";kind="offence-update:"+id;body="<p class=\"subtle\">Offences already used in incidents cannot be edited. Create a new offence code for revised policies.</p>"+input("name","Name","text",data.name,"required")+input("category","Category","text",data.category,"required")+options("severity","Severity",[[1,"1 - Minor"],[2,"2 - Moderate"],[3,"3 - Serious"],[4,"4 - Critical"]],data.severity);break;
  case "create-incident":name="Report incident";kind="incidents";body=await learnerPicker()+options("offence_id","Offence",(await schoolOffences()).map(x=>[x.id,x.code+" · "+x.name]))+options("location","Location",["Classroom","Playground","Corridor","Assembly","School gate","Toilet","Sports field","Other"].map(x=>[x,x]))+area("description","Description")+options("immediate_action","Immediate action",["Restorative conversation","Verbal correction","Referred to HOD","Parent contacted","Other"].map(x=>[x,x]));break;
  case "review-incident":data=await api("incidents/"+id);name="Review incident";kind="incident-review:"+id;body=options("status","Review decision",["pending","verified","disputed","referred","resolved","withdrawn"].map(x=>[x,x]),data.review_status)+area("notes","Review notes",data.review_notes);break;
@@ -419,7 +533,20 @@ async function openAction(action,id){
  case "assign-case":name="Assign case";kind="case-assignment:"+id;body=options("assigned_user_id","Staff member",[[0,"Unassigned"],...(await api("case-assignees")).map(x=>[x.user_id,x.label])]);break;
  case "invite":name="Invite staff";kind="invitations";body=input("email","Staff email","email","","required")+options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]))+input("assigned_class","Assigned class (educator)");break;
  case "edit-member":data=(await api("members")).find(x=>String(x.id)===String(id));if(!data)throw Error("Staff member not found");name="Edit staff permissions";kind="member-update:"+id;body=options("role","Role",["educator","hod","smt","principal"].map(x=>[x,x]),data.role)+options("active","Account status",[["true","Active"],["false","Deactivated"]],String(data.active))+input("assigned_class","Assigned class", "text",data.assigned_class||"");break;
- case "create-intervention":name="Record intervention";kind="interventions";body=options("incident_id","Incident",await incidents())+options("type","Intervention type",["Restorative conversation","Parent meeting","Behaviour agreement","Support referral","Monitoring"].map(x=>[x,x]))+area("notes","Notes");break;
+ case "create-intervention":{
+  const types=["Restorative conversation","Parent meeting","Behaviour agreement","Support referral","Monitoring","HOD discussion","Literacy remedial support","Numeracy booster programme","EQ / emotional regulation coaching","Learning support referral","Attendance support plan","Classroom adjustment plan","Safety / anti-bullying plan","SMT formal review"];
+  const prefType=recPref.type||"", prefInc=recPref.incidentId||"", prefNotes=recPref.notes||"";
+  recPref={type:"",incidentId:"",notes:""};
+  name="Record intervention";kind="interventions";
+  body=options("incident_id","Incident",await incidents(),String(prefInc))+options("type","Intervention type",types.map(x=>[x,x]),prefType)+input("due_at","Follow-up due","datetime-local","")+area("notes","Notes",prefNotes);
+  break;}
+ case "accept-recommendation":{
+  const parts=String(id).split("|");
+  const lid=parts[0], itype=decodeURIComponent(parts[1]||""), iid=parts[2]||"";
+  if(!iid){toast("Link an incident first, then accept this recommendation against that incident",true);return}
+  recPref={type:itype,incidentId:String(iid),notes:"Accepted auto-recommendation for learner #"+lid+": "+itype+" (staff confirmed)."};
+  await openAction("create-intervention");
+  return;}
  case "edit-intervention":data=(await api("interventions")).find(x=>String(x.id)===String(id));name="Update intervention";kind="intervention-update:"+id;body=options("outcome","Outcome",["pending","improved","partially_improved","no_improvement","follow_up","closed"].map(x=>[x,x]),data.outcome)+area("notes","Notes",data.notes);break;
  case "create-contact":name="Log parent contact";kind="parent-contacts";body=await learnerPicker()+options("method","Method",["Phone","Email","Meeting","Letter"].map(x=>[x,x]))+input("purpose","Purpose","text","","required")+input("outcome","Outcome","text","","required");break;
  case "edit-task":data=(await api("review-tasks")).find(x=>String(x.id)===String(id));name="Update review task";kind="task-update:"+id;body=options("status","Task status",["open","in_progress","completed","cancelled"].map(x=>[x,x]),data.status);break;
@@ -461,6 +588,12 @@ async function submitForm(f){
  for(const field of [...intFields,"owner_user_id","user_id"])if(data[field]!==undefined&&data[field]!=="")data[field]=Number(data[field]);
  if(data.active!==undefined)data.active=data.active==="true";
  if(prefix==="learner-update"){url="learners/"+id;method="PATCH";go="learners/"+id}
+ if(prefix==="learner-observation"){
+  url="learners/"+id+"/observations";go="learners/"+id;
+  data.learner_id=Number(id);
+  if(data.score==="")delete data.score;else if(data.score!=null)data.score=Number(data.score);
+  if(data.observed_at)data.observed_at=new Date(data.observed_at+"T12:00:00").toISOString();
+ }
  if(prefix==="incident-review"){url="incidents/"+id+"/review";method="PATCH";go="incidents/"+id}
  if(prefix==="case-status"){url="cases/"+id;method="PATCH";go="cases/"+id}
  if(prefix==="case-assignment"){url="cases/"+id+"/assign";method="PATCH";data.assigned_user_id=data.assigned_user_id||null;go="cases/"+id}
@@ -475,8 +608,11 @@ async function submitForm(f){
  if(prefix==="task-update"){url="review-tasks/"+id;method="PATCH";go="tasks"}
  if(prefix==="appeal-update"){url="appeals/"+id;method="PATCH";go="appeals"}
  if(prefix==="appointment-update"){url="appointments/"+id;method="PATCH";go="appointments"}
- if(k==="settings"){url="settings";method="PUT";go="settings"}
+ if(k==="settings"){url="settings";method="PUT";["repeat_threshold","repeat_window_days","repeat_similar_threshold","repeat_total_threshold","follow_up_default_days"].forEach(x=>data[x]=Number(data[x]));go="settings"}
  if(k==="academic"){url="settings/academic";method="PUT";data.academic_year=Number(data.academic_year);data.term=Number(data.term);go="settings"}
+ if(k==="offences"){data.severity=Number(data.severity);data.escalate_hod=String(data.escalate_hod)==="true";data.escalate_smt=String(data.escalate_smt)==="true";if(data.repeat_threshold==="")delete data.repeat_threshold;else if(data.repeat_threshold!=null)data.repeat_threshold=Number(data.repeat_threshold);if(!data.similarity_group)data.similarity_group=null}
+ if(k==="interventions"&&data.due_at){data.due_at=new Date(data.due_at).toISOString()}
+ if(k==="interventions"&&!data.due_at){delete data.due_at}
  if(k==="conduct-versions"){data.effective_from=new Date(data.effective_from).toISOString();go="conduct"}
  if(k==="hearings"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="hearings"}
  if(prefix==="hearing-update"){url="hearings/"+id;method="PATCH";go="hearings"}
@@ -558,6 +694,8 @@ document.addEventListener("click",async e=>{
   const x=a.dataset.action;
   if(x==="close"){close();return}if(x==="reload"){render();return}
   if(x==="go-learners"){navigate("learners");return}
+  if(x==="go-guide"){navigate("guide");return}
+  if(x==="go-offences"){navigate("offences");return}
   if(x==="remove-class"){if(!confirm("Remove class assignment?"))return;try{await api("class-assignments/"+a.dataset.id,"DELETE");toast("Removed");render()}catch(err){toast(err.message,true)}return}
   try{await openAction(x,a.dataset.id)}catch(err){toast(err.message,true)}
  }

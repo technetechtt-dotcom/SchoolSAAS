@@ -1,5 +1,5 @@
 """Multi-school discipline SaaS MVP; demonstration only, not production approved."""
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from collections import Counter
 import os, re, secrets, hashlib, hmac
 import jwt
@@ -7,7 +7,7 @@ from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, Cookie
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, UniqueConstraint, select, func
+from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, Date, UniqueConstraint, select, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 from pydantic import BaseModel, Field
 
@@ -56,6 +56,8 @@ class Learner(Base):
     grade: Mapped[str] = mapped_column(String(25))
     class_name: Mapped[str] = mapped_column(String(30))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    enrolled_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    grade_started: Mapped[str | None] = mapped_column(String(25), nullable=True)
 class Offence(Base):
     __tablename__ = 'offences'
     __table_args__ = (UniqueConstraint('school_id','code'),)
@@ -65,6 +67,10 @@ class Offence(Base):
     name: Mapped[str] = mapped_column(String(160))
     category: Mapped[str] = mapped_column(String(100))
     severity: Mapped[int] = mapped_column(Integer)
+    escalate_hod: Mapped[bool] = mapped_column(Boolean, default=False)
+    escalate_smt: Mapped[bool] = mapped_column(Boolean, default=False)
+    repeat_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    similarity_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
 class Incident(Base):
     __tablename__ = 'incidents'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -79,6 +85,8 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     review_status: Mapped[str] = mapped_column(String(30), default='pending')
     review_notes: Mapped[str] = mapped_column(Text, default='')
+    flag_reason: Mapped[str] = mapped_column(String(80), default='')
+    public_ref: Mapped[str | None] = mapped_column(String(40), nullable=True)
 class Case(Base):
     __tablename__ = 'cases'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -87,6 +95,7 @@ class Case(Base):
     title: Mapped[str] = mapped_column(String(180))
     status: Mapped[str] = mapped_column(String(40), default='open')
     assigned_user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    public_ref: Mapped[str | None] = mapped_column(String(40), nullable=True)
 class CaseIncident(Base):
     __tablename__ = 'case_incidents'
     __table_args__ = (UniqueConstraint('school_id','case_id','incident_id'),)
@@ -103,6 +112,7 @@ class Intervention(Base):
     notes: Mapped[str] = mapped_column(Text, default='')
     owner_user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
     outcome: Mapped[str] = mapped_column(String(50), default='pending')
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 class Audit(Base):
     __tablename__ = 'audit_events'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -176,6 +186,26 @@ def _ensure_sqlite_columns():
             ('mfa_secret', 'VARCHAR(64)'),
             ('mfa_enabled', 'BOOLEAN DEFAULT 0'),
         ],
+        'offences': [
+            ('escalate_hod', 'BOOLEAN DEFAULT 0'),
+            ('escalate_smt', 'BOOLEAN DEFAULT 0'),
+            ('repeat_threshold', 'INTEGER'),
+            ('similarity_group', 'VARCHAR(80)'),
+        ],
+        'incidents': [
+            ('flag_reason', "VARCHAR(80) DEFAULT ''"),
+            ('public_ref', 'VARCHAR(40)'),
+        ],
+        'cases': [
+            ('public_ref', 'VARCHAR(40)'),
+        ],
+        'interventions': [
+            ('due_at', 'DATETIME'),
+        ],
+        'learners': [
+            ('enrolled_on', 'DATE'),
+            ('grade_started', 'VARCHAR(25)'),
+        ],
     }
     with engine.begin() as conn:
         for table, cols in planned.items():
@@ -204,6 +234,7 @@ def _ensure_sqlite_user_mfa_columns():
 def startup():
     # Local prototype only; deployment must run Alembic with auto creation disabled.
     if os.getenv("SCHEMA_AUTO_CREATE","true").lower() == "true":
+        import app.learner_journey  # noqa: F401 — register journey tables on Base.metadata
         Base.metadata.create_all(engine)
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
@@ -322,6 +353,10 @@ class OffenceIn(BaseModel):
     name: str=Field(min_length=1,max_length=160)
     category: str=Field(min_length=1,max_length=100)
     severity: int=Field(ge=1,le=4)
+    escalate_hod: bool=False
+    escalate_smt: bool=False
+    repeat_threshold: int|None=Field(default=None,ge=1,le=20)
+    similarity_group: str|None=Field(default=None,max_length=80)
 class IncidentIn(BaseModel):
     learner_id: int
     offence_id: int
@@ -336,6 +371,42 @@ class InterventionIn(BaseModel):
     incident_id: int
     type: str=Field(min_length=1,max_length=120)
     notes: str=Field(default='',max_length=2000)
+    due_at: datetime|None=None
+
+def setting_map(s:Session, school_id:int)->dict[str,str]:
+    return {x.key:x.value for x in s.scalars(select(SchoolSetting).where(SchoolSetting.school_id==school_id)).all()}
+
+def setting_int(settings:dict[str,str], key:str, default:int)->int:
+    try:return int(settings.get(key, default))
+    except (TypeError,ValueError):return default
+
+def next_public_ref(s:Session, school_id:int, model, prefix:str, year:int)->str:
+    n=s.scalar(select(func.count()).select_from(model).where(model.school_id==school_id)) or 0
+    return f'{prefix}-{year}-{n+1:05d}'
+
+def evaluate_repeat_flag(s:Session, school_id:int, learner_id:int, offence:Offence, settings:dict[str,str]):
+    """Return (flagged, reason, similar_count, total_count). Never implies punishment."""
+    window_days=setting_int(settings,'repeat_window_days',90)
+    similar_threshold=offence.repeat_threshold if offence.repeat_threshold is not None else setting_int(settings,'repeat_similar_threshold',setting_int(settings,'repeat_threshold',3))
+    total_threshold=setting_int(settings,'repeat_total_threshold',5)
+    since=datetime.now(timezone.utc)-timedelta(days=window_days)
+    recent=s.scalars(select(Incident).where(Incident.school_id==school_id,Incident.learner_id==learner_id,
+        Incident.status!='withdrawn',Incident.created_at>=since)).all()
+    total_count=len(recent)
+    if offence.similarity_group:
+        group_ids={o.id for o in s.scalars(select(Offence).where(Offence.school_id==school_id,Offence.similarity_group==offence.similarity_group)).all()}
+        similar_count=sum(1 for i in recent if i.offence_id in group_ids)
+    else:
+        similar_count=sum(1 for i in recent if i.offence_id==offence.id)
+    if getattr(offence,'escalate_smt',False) or offence.severity>=4:
+        return True,'smt_review',similar_count,total_count
+    if getattr(offence,'escalate_hod',False) or offence.severity>=3:
+        return True,'serious_review',similar_count,total_count
+    if similar_count>=similar_threshold:
+        return True,'similar_repeat',similar_count,total_count
+    if total_count>=total_threshold:
+        return True,'total_repeat',similar_count,total_count
+    return False,'',similar_count,total_count
 
 @app.post('/api/register',status_code=201)
 def register(data:Register, response:Response, s:Session=Depends(db)):
@@ -426,11 +497,15 @@ def add_learner(data:LearnerIn,s:Session=Depends(db),ctx=Depends(require('school
     return {'id':item.id,'admission_no':item.admission_no}
 @app.get('/api/offences')
 def offences(s:Session=Depends(db),ctx=Depends(current)):
-    return [{'id':o.id,'code':o.code,'name':o.name,'category':o.category,'severity':o.severity} for o in s.scalars(select(Offence).where(Offence.school_id==ctx['sid']).order_by(Offence.code)).all()]
+    return [{'id':o.id,'code':o.code,'name':o.name,'category':o.category,'severity':o.severity,
+             'escalate_hod':bool(getattr(o,'escalate_hod',False)),'escalate_smt':bool(getattr(o,'escalate_smt',False)),
+             'repeat_threshold':o.repeat_threshold,'similarity_group':o.similarity_group or ''}
+            for o in s.scalars(select(Offence).where(Offence.school_id==ctx['sid']).order_by(Offence.code)).all()]
 @app.post('/api/offences',status_code=201)
 def add_offence(data:OffenceIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt'))):
     if s.scalar(select(Offence).where(Offence.school_id==ctx['sid'],Offence.code==data.code)): raise HTTPException(409,'Offence code exists')
-    o=Offence(school_id=ctx['sid'],**data.model_dump());s.add(o);s.flush();log(s,ctx,'create','offence',o.id);s.commit();return {'id':o.id}
+    payload=data.model_dump();payload['similarity_group']=(payload.get('similarity_group') or None)
+    o=Offence(school_id=ctx['sid'],**payload);s.add(o);s.flush();log(s,ctx,'create','offence',o.id);s.commit();return {'id':o.id}
 @app.get('/api/incidents')
 def incidents(s:Session=Depends(db),ctx=Depends(current)):
     q=select(Incident).where(Incident.school_id==ctx['sid']).order_by(Incident.id.desc())
@@ -442,22 +517,36 @@ def add_incident(data:IncidentIn,s:Session=Depends(db),ctx=Depends(require('scho
     offence=s.scalar(select(Offence).where(Offence.id==data.offence_id,Offence.school_id==ctx['sid']))
     if not learner or not offence: raise HTTPException(404,'Learner or offence not found at this school')
     if ctx['role']=='educator' and learner.class_name not in ctx['assigned_classes']:raise HTTPException(403,'Learner is outside your assigned classes')
-    i=Incident(school_id=ctx['sid'],reporter_id=ctx['uid'],**data.model_dump());s.add(i);s.flush()
-    same=s.scalar(select(func.count()).select_from(Incident).where(Incident.school_id==ctx['sid'],Incident.learner_id==i.learner_id,Incident.offence_id==i.offence_id,Incident.status!='withdrawn'))
-    setting=s.scalar(select(SchoolSetting.value).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
-    flagged=same>=int(setting or '3') or offence.severity>=3
-    if flagged:s.add(ReviewTask(school_id=ctx['sid'],incident_id=i.id,reason='Repeat review' if same>=int(setting or '3') else 'Serious incident review',due_at=datetime.now(timezone.utc)+timedelta(days=2)))
+    settings=setting_map(s,ctx['sid'])
+    year=setting_int(settings,'academic_year',datetime.now(timezone.utc).year)
+    prefix=(settings.get('incident_prefix') or 'INC').strip() or 'INC'
+    i=Incident(school_id=ctx['sid'],reporter_id=ctx['uid'],**data.model_dump())
+    i.public_ref=next_public_ref(s,ctx['sid'],Incident,prefix,year)
+    s.add(i);s.flush()
+    flagged,reason,similar_count,total_count=evaluate_repeat_flag(s,ctx['sid'],i.learner_id,offence,settings)
+    i.flag_reason=reason
+    if flagged:
+        labels={'similar_repeat':'Repeat review (similar behaviour)','total_repeat':'Repeat review (total incidents)',
+                'serious_review':'Serious incident review','smt_review':'SMT review required'}
+        s.add(ReviewTask(school_id=ctx['sid'],incident_id=i.id,reason=labels.get(reason,'Review required'),
+                         due_at=datetime.now(timezone.utc)+timedelta(days=setting_int(settings,'follow_up_default_days',7))))
     log(s,ctx,'create','incident',i.id);s.commit()
-    return {'id':i.id,'same_offence_count':same,'requires_review':flagged,'message':'Review flag only; no automatic punishment'}
+    return {'id':i.id,'public_ref':i.public_ref,'same_offence_count':similar_count,'total_in_window':total_count,
+            'flag_reason':reason,'requires_review':flagged,'message':'Review flag only; no automatic punishment'}
 @app.post('/api/cases',status_code=201)
 def add_case(data:CaseIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
     learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
     ids=set(data.incident_ids)
     matches=s.scalars(select(Incident).where(Incident.school_id==ctx['sid'],Incident.learner_id==data.learner_id,Incident.id.in_(ids))).all()
     if not learner or len(matches)!=len(ids):raise HTTPException(400,'Incidents must belong to the selected learner and school')
-    case=Case(school_id=ctx['sid'],learner_id=data.learner_id,title=data.title);s.add(case);s.flush()
+    settings=setting_map(s,ctx['sid'])
+    year=setting_int(settings,'academic_year',datetime.now(timezone.utc).year)
+    prefix=(settings.get('case_prefix') or 'CASE').strip() or 'CASE'
+    case=Case(school_id=ctx['sid'],learner_id=data.learner_id,title=data.title,
+              public_ref=next_public_ref(s,ctx['sid'],Case,prefix,year))
+    s.add(case);s.flush()
     for i in matches:s.add(CaseIncident(school_id=ctx['sid'],case_id=case.id,incident_id=i.id))
-    log(s,ctx,'create','case',case.id);s.commit();return {'id':case.id}
+    log(s,ctx,'create','case',case.id);s.commit();return {'id':case.id,'public_ref':case.public_ref}
 @app.get('/api/cases')
 def cases(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
     return [{'id':c.id,'learner_id':c.learner_id,'title':c.title,'status':c.status} for c in s.scalars(select(Case).where(Case.school_id==ctx['sid'])).all()]
@@ -528,6 +617,13 @@ class ContactInput(BaseModel):
     outcome:str=Field(min_length=1,max_length=200)
 class RuleInput(BaseModel):
     repeat_threshold:int=Field(ge=2,le=10)
+    repeat_window_days:int=Field(default=90,ge=7,le=365)
+    repeat_similar_threshold:int=Field(default=3,ge=1,le=20)
+    repeat_total_threshold:int=Field(default=5,ge=1,le=30)
+    follow_up_default_days:int=Field(default=7,ge=1,le=60)
+    incident_prefix:str=Field(default='INC',min_length=1,max_length=12)
+    case_prefix:str=Field(default='CASE',min_length=1,max_length=12)
+    admission_prefix:str=Field(default='ADM',min_length=1,max_length=12)
 
 STAFF_ROLES={'school_admin','principal','smt','hod','educator'}
 
@@ -628,7 +724,8 @@ def patch_case(case_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Depends(re
 
 @app.get('/api/interventions')
 def list_interventions(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
-    return [{'id':i.id,'incident_id':i.incident_id,'type':i.type,'outcome':i.outcome,'notes':i.notes}
+    return [{'id':i.id,'incident_id':i.incident_id,'type':i.type,'outcome':i.outcome,'notes':i.notes,
+             'due_at':i.due_at.isoformat() if getattr(i,'due_at',None) else None}
         for i in s.scalars(select(Intervention).where(Intervention.school_id==ctx['sid']).limit(200)).all()]
 
 @app.post('/api/parent-contacts',status_code=201)
@@ -657,14 +754,22 @@ def patch_review_task(task_id:int,data:StatusPatch,s:Session=Depends(db),ctx=Dep
 
 @app.get('/api/settings')
 def get_settings(s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt'))):
-    v=s.scalar(select(SchoolSetting.value).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
-    return {'repeat_threshold':int(v or '3')}
+    conf=setting_map(s,ctx['sid'])
+    similar=setting_int(conf,'repeat_similar_threshold',setting_int(conf,'repeat_threshold',3))
+    return {'repeat_threshold':similar,'repeat_window_days':setting_int(conf,'repeat_window_days',90),
+            'repeat_similar_threshold':similar,'repeat_total_threshold':setting_int(conf,'repeat_total_threshold',5),
+            'follow_up_default_days':setting_int(conf,'follow_up_default_days',7),
+            'incident_prefix':conf.get('incident_prefix','INC'),'case_prefix':conf.get('case_prefix','CASE'),
+            'admission_prefix':conf.get('admission_prefix','ADM')}
 
 @app.put('/api/settings')
 def set_settings(data:RuleInput,s:Session=Depends(db),ctx=Depends(require('school_admin','principal'))):
-    r=s.scalar(select(SchoolSetting).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key=='repeat_threshold'))
-    if not r:s.add(SchoolSetting(school_id=ctx['sid'],key='repeat_threshold',value=str(data.repeat_threshold)))
-    else:r.value=str(data.repeat_threshold)
+    payload=data.model_dump()
+    payload['repeat_threshold']=payload['repeat_similar_threshold']
+    for key,value in payload.items():
+        r=s.scalar(select(SchoolSetting).where(SchoolSetting.school_id==ctx['sid'],SchoolSetting.key==key))
+        if not r:s.add(SchoolSetting(school_id=ctx['sid'],key=key,value=str(value)))
+        else:r.value=str(value)
     log(s,ctx,'update','school_settings',ctx['sid']);s.commit();return {'ok':True}
 
 @app.get('/api/reports/summary')
@@ -685,6 +790,10 @@ from app.account_recovery import router as recovery_router
 app.include_router(recovery_router)
 from app.pilot_pack import router as pilot_router
 app.include_router(pilot_router)
+from app.learner_journey import router as journey_router
+app.include_router(journey_router)
+from app.intervention_recommend import router as recommend_router
+app.include_router(recommend_router)
 
 @app.delete('/api/audit/{event_id}')
 def delete_audit_blocked(event_id: int):

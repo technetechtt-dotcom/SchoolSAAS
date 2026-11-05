@@ -3,7 +3,7 @@
 This module extends the original MVP without changing its existing routes.
 Sensitive records remain school-scoped and require explicit permissions.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import Counter
 import csv
 import io
@@ -83,8 +83,11 @@ def learner_scope(s,identifier,ctx):
 @router.get("/learners/{learner_id}")
 def learner_detail(learner_id:int,s:Session=Depends(m.db),ctx=Depends(m.current)):
     l=learner_scope(s,learner_id,ctx)
+    enrolled=getattr(l,"enrolled_on",None)
     result={"id":l.id,"admission_no":l.admission_no,"first_name":l.first_name,
-        "surname":l.surname,"grade":l.grade,"class_name":l.class_name,"active":l.active}
+        "surname":l.surname,"grade":l.grade,"class_name":l.class_name,"active":l.active,
+        "enrolled_on":enrolled.isoformat() if enrolled else None,
+        "grade_started":getattr(l,"grade_started",None)}
     if ctx["role"]!="educator":
         result["incidents"]=[{"id":i.id,"status":i.status,"location":i.location,"date":i.created_at.isoformat()}
             for i in s.scalars(select(m.Incident).where(m.Incident.school_id==ctx["sid"],m.Incident.learner_id==l.id).order_by(m.Incident.id.desc()).limit(50)).all()]
@@ -98,10 +101,11 @@ def incident_detail(incident_id:int,s:Session=Depends(m.db),ctx=Depends(m.curren
     if ctx["role"]=="educator" and i.reporter_id!=ctx["uid"]:raise HTTPException(403,"Not authorised to view this incident")
     l=learner_scope(s,i.learner_id,ctx)
     o=school_record(s,m.Offence,i.offence_id,ctx["sid"])
-    return {"id":i.id,"learner_id":l.id,"learner_name":l.first_name+" "+l.surname,
+    return {"id":i.id,"public_ref":getattr(i,"public_ref",None),"learner_id":l.id,"learner_name":l.first_name+" "+l.surname,
             "offence":o.name,"severity":o.severity,"description":i.description,
             "location":i.location,"immediate_action":i.immediate_action,
             "status":i.status,"review_status":i.review_status,"review_notes":i.review_notes,
+            "flag_reason":getattr(i,"flag_reason","") or "",
             "created_at":i.created_at.isoformat()}
 
 @router.get("/cases/{case_id}")
@@ -360,6 +364,10 @@ class OffencePatch(BaseModel):
     name:str=Field(min_length=1,max_length=160)
     category:str=Field(min_length=1,max_length=100)
     severity:int=Field(ge=1,le=4)
+    escalate_hod:bool=False
+    escalate_smt:bool=False
+    repeat_threshold:int|None=Field(default=None,ge=1,le=20)
+    similarity_group:str|None=Field(default=None,max_length=80)
 
 @router.patch("/offences/{offence_id}")
 def update_offence(offence_id:int,data:OffencePatch,s:Session=Depends(m.db),
@@ -369,5 +377,134 @@ def update_offence(offence_id:int,data:OffencePatch,s:Session=Depends(m.db),
         m.Incident.school_id==ctx["sid"],m.Incident.offence_id==offence.id))
     if referenced:raise HTTPException(409,"This offence is referenced by incidents. Create a new version/code instead.")
     offence.name=data.name;offence.category=data.category;offence.severity=data.severity
+    offence.escalate_hod=data.escalate_hod;offence.escalate_smt=data.escalate_smt
+    offence.repeat_threshold=data.repeat_threshold
+    offence.similarity_group=(data.similarity_group or None)
     m.log(s,ctx,"update","offence",offence.id);s.commit()
     return {"ok":True}
+
+@router.get("/learners/{learner_id}/discipline-profile")
+def discipline_profile(learner_id:int,s:Session=Depends(m.db),ctx=Depends(m.current)):
+    learner=learner_scope(s,learner_id,ctx)
+    if ctx["role"]=="educator":
+        raise HTTPException(403,"Learner discipline profile is limited to authorised managers")
+    sid=ctx["sid"]
+    settings=m.setting_map(s,sid)
+    window_days=m.setting_int(settings,"repeat_window_days",90)
+    since=datetime.now(timezone.utc)-timedelta(days=window_days)
+    offences={o.id:o for o in s.scalars(select(m.Offence).where(m.Offence.school_id==sid)).all()}
+    incidents=s.scalars(select(m.Incident).where(m.Incident.school_id==sid,m.Incident.learner_id==learner.id,
+        m.Incident.status!="withdrawn").order_by(m.Incident.id.desc())).all()
+    windowed=[i for i in incidents if i.created_at.replace(tzinfo=timezone.utc)>=since]
+    by_level=Counter(str(offences[i.offence_id].severity) for i in windowed if i.offence_id in offences)
+    repeated=Counter((offences[i.offence_id].code+" · "+offences[i.offence_id].name)
+                     for i in windowed if i.offence_id in offences)
+    open_cases=s.scalars(select(m.Case).where(m.Case.school_id==sid,m.Case.learner_id==learner.id,m.Case.status!="closed")).all()
+    open_tasks=s.scalars(select(m.ReviewTask).where(m.ReviewTask.school_id==sid,m.ReviewTask.status.in_(("open","in_progress")),
+        m.ReviewTask.incident_id.in_([i.id for i in incidents] or [-1]))).all()
+    if any(c.status in ("formal_process","smt_review") for c in open_cases) or any("SMT" in t.reason for t in open_tasks):
+        status="formal_review"
+    elif open_cases or open_tasks:
+        status="under_review"
+    elif windowed:
+        status="monitoring"
+    else:
+        status="clear"
+    incident_ids=[i.id for i in incidents]
+    interventions=[]
+    if incident_ids:
+        interventions=[{"id":x.id,"incident_id":x.incident_id,"type":x.type,"outcome":x.outcome,
+            "due_at":x.due_at.isoformat() if getattr(x,"due_at",None) else None,"notes":x.notes}
+            for x in s.scalars(select(m.Intervention).where(m.Intervention.school_id==sid,m.Intervention.incident_id.in_(incident_ids)).order_by(m.Intervention.id.desc()).limit(20)).all()]
+    contacts=[{"id":x.id,"method":x.method,"purpose":x.purpose,"outcome":x.outcome,"created_at":x.created_at.isoformat()}
+              for x in s.scalars(select(m.ParentContact).where(m.ParentContact.school_id==sid,m.ParentContact.learner_id==learner.id).order_by(m.ParentContact.id.desc()).limit(20)).all()]
+    return {"learner_id":learner.id,"name":learner.first_name+" "+learner.surname,"grade":learner.grade,
+            "class_name":learner.class_name,"window_days":window_days,"status":status,
+            "totals":{"incidents_all":len(incidents),"incidents_window":len(windowed),
+                      "by_level":dict(sorted(by_level.items())),"open_cases":len(open_cases),"open_reviews":len(open_tasks)},
+            "repeated_behaviours":[{"offence":k,"count":v} for k,v in repeated.most_common(10)],
+            "interventions":interventions,"parent_contacts":contacts,
+            "open_cases":[{"id":c.id,"title":c.title,"status":c.status,"public_ref":getattr(c,"public_ref",None)} for c in open_cases]}
+
+@router.get("/analytics/early-warning")
+def early_warning(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    sid=ctx["sid"]; now=datetime.now(timezone.utc)
+    overdue_interventions=[{"id":x.id,"incident_id":x.incident_id,"type":x.type,"due_at":x.due_at.isoformat(),"outcome":x.outcome}
+        for x in s.scalars(select(m.Intervention).where(m.Intervention.school_id==sid,
+            m.Intervention.outcome.in_(("pending","follow_up")),m.Intervention.due_at!=None,m.Intervention.due_at<now)).all()]
+    overdue_meetings=[{"id":x.id,"learner_id":x.learner_id,"title":x.title,"scheduled_at":x.scheduled_at.isoformat(),"status":x.status}
+        for x in s.scalars(select(Appointment).where(Appointment.school_id==sid,Appointment.status=="scheduled",Appointment.scheduled_at<now)).all()]
+    offences={o.id:o for o in s.scalars(select(m.Offence).where(m.Offence.school_id==sid)).all()}
+    serious=[{"id":i.id,"learner_id":i.learner_id,"public_ref":getattr(i,"public_ref",None),"offence":offences.get(i.offence_id).name if i.offence_id in offences else "?",
+              "severity":offences.get(i.offence_id).severity if i.offence_id in offences else None,"created_at":i.created_at.isoformat()}
+             for i in s.scalars(select(m.Incident).where(m.Incident.school_id==sid,m.Incident.status!="withdrawn").order_by(m.Incident.id.desc()).limit(300)).all()
+             if i.offence_id in offences and offences[i.offence_id].severity>=3][:20]
+    open_reviews=[{"id":t.id,"incident_id":t.incident_id,"reason":t.reason,"due_at":t.due_at.isoformat(),"status":t.status}
+        for t in s.scalars(select(m.ReviewTask).where(m.ReviewTask.school_id==sid,m.ReviewTask.status.in_(("open","in_progress"))).order_by(m.ReviewTask.due_at).limit(50)).all()]
+    return {"overdue_interventions":overdue_interventions,"overdue_appointments":overdue_meetings,
+            "serious_open":serious,"open_review_tasks":open_reviews,
+            "counts":{"overdue_interventions":len(overdue_interventions),"overdue_appointments":len(overdue_meetings),
+                      "serious_open":len(serious),"open_reviews":len(open_reviews)}}
+
+@router.get("/analytics/hotspots")
+def hotspots(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    sid=ctx["sid"]
+    settings=m.setting_map(s,sid)
+    window_days=m.setting_int(settings,"repeat_window_days",90)
+    since=datetime.now(timezone.utc)-timedelta(days=window_days)
+    incidents=s.scalars(select(m.Incident).where(m.Incident.school_id==sid,m.Incident.status!="withdrawn",m.Incident.created_at>=since)).all()
+    learners={l.id:l for l in s.scalars(select(m.Learner).where(m.Learner.school_id==sid)).all()}
+    by_location=Counter(i.location for i in incidents)
+    by_class=Counter(learners[i.learner_id].class_name for i in incidents if i.learner_id in learners)
+    by_grade=Counter(learners[i.learner_id].grade for i in incidents if i.learner_id in learners)
+    return {"window_days":window_days,"by_location":dict(by_location.most_common(12)),
+            "by_class":dict(by_class.most_common(12)),"by_grade":dict(sorted(by_grade.items(),key=lambda x:str(x[0])))}
+
+@router.get("/analytics/repeats")
+def repeats_board(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    sid=ctx["sid"]; settings=m.setting_map(s,sid)
+    window_days=m.setting_int(settings,"repeat_window_days",90)
+    similar_threshold=m.setting_int(settings,"repeat_similar_threshold",m.setting_int(settings,"repeat_threshold",3))
+    since=datetime.now(timezone.utc)-timedelta(days=window_days)
+    offences={o.id:o for o in s.scalars(select(m.Offence).where(m.Offence.school_id==sid)).all()}
+    learners={l.id:l for l in s.scalars(select(m.Learner).where(m.Learner.school_id==sid)).all()}
+    incidents=s.scalars(select(m.Incident).where(m.Incident.school_id==sid,m.Incident.status!="withdrawn",m.Incident.created_at>=since)).all()
+    pairs=Counter()
+    for i in incidents:
+        o=offences.get(i.offence_id)
+        if not o:continue
+        key_group=o.similarity_group or f"id:{o.id}"
+        pairs[(i.learner_id,key_group,o.code,o.name)]+=1
+    rows=[]
+    for (lid,group,code,name),count in pairs.items():
+        threshold=next((offences[i.offence_id].repeat_threshold for i in incidents if i.learner_id==lid and offences.get(i.offence_id) and (offences[i.offence_id].similarity_group or f"id:{i.offence_id}")==group and offences[i.offence_id].repeat_threshold),similar_threshold)
+        if count< (threshold or similar_threshold):continue
+        learner=learners.get(lid)
+        if not learner:continue
+        rows.append({"learner_id":lid,"name":learner.first_name+" "+learner.surname,"grade":learner.grade,
+                     "offence":f"{code} · {name}","similar_count":count,"window_days":window_days,"status":"Review"})
+    rows.sort(key=lambda x:(-x["similar_count"],x["name"]))
+    return {"window_days":window_days,"items":rows[:50]}
+
+@router.get("/guide")
+def process_guide(ctx=Depends(m.current)):
+    role=ctx["role"]
+    steps=[
+        {"title":"1. Safety first","detail":"If there is an immediate safety concern, secure learners and refer to HOD/SMT immediately."},
+        {"title":"2. Classroom response","detail":"Apply an authorised classroom intervention where appropriate (verbal correction, restorative conversation)."},
+        {"title":"3. Record once","detail":"Submit the incident: learner, location, offence, brief description, immediate action. Target under two minutes."},
+        {"title":"4. System checks history","detail":"SchoolCare counts similar and total incidents in the configured window and flags review — it never auto-punishes."},
+        {"title":"5. Escalate when flagged","detail":"HOD/SMT review tasks appear for repeats, serious offences, or catalogue escalation flags."},
+        {"title":"6. Intervene and follow up","detail":"Record interventions and outcomes. Log parent contact. Open a case only when formal/repeated management is needed."},
+    ]
+    role_notes={
+        "educator":"Focus on Report Incident, My Incidents, and this guide. You see learners in your assigned classes.",
+        "hod":"Review flagged incidents, learner discipline profiles, interventions, and grade hotspots.",
+        "smt":"Use early-warning, serious incidents, cases, and school-wide trends for SMT planning.",
+        "principal":"Full school oversight: dashboards, cases, reports, settings, and audit accountability.",
+        "school_admin":"Configure offence catalogue, thresholds, academic year, staff access, and retention settings.",
+    }
+    return {"role":role,"headline":"What do I do?","principle":"Capture once. Use many times. Authorised people decide sanctions — not the software.",
+            "steps":steps,"role_note":role_notes.get(role,"Follow your school Code of Conduct and authorised role permissions."),
+            "must_not":["Automatically determine guilt","Impose sanctions from points or scores",
+                        "Permanently label a learner as a problem child","Replace the Code of Conduct"]}
