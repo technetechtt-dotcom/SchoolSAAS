@@ -1,0 +1,72 @@
+# Example production topology. Requires externally reviewed database and backup design.
+# Usage: docker compose --env-file .env.production -f compose.production.yml up -d
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: schoolcare
+      POSTGRES_USER: ${DB_USER:?Set DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d schoolcare"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set URL-encoded DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY}
+      APP_PUBLIC_URL: https://${DOMAIN:?Set DOMAIN}
+      COOKIE_SECURE: "true"
+      SCHEMA_AUTO_CREATE: "false"
+      EVIDENCE_UPLOAD_DIR: /srv/storage/evidence
+      LETTER_UPLOAD_DIR: /srv/storage/letters
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      BILLING_GATEWAY: none
+    volumes:
+      - evidence_data:/srv/storage/evidence
+      - letter_data:/srv/storage/letters
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz',timeout=4)"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 25s
+    depends_on:
+      db: {condition: service_healthy}
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+    ports: ["80:80","443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [internal]
+networks:
+  internal:
+volumes:
+  postgres_data:
+  evidence_data:
+  letter_data:
+  caddy_data:
+  caddy_config:
