@@ -86,7 +86,7 @@ def journey_domains(ctx=Depends(m.current)):
 
 
 @router.get("/learners/{learner_id}/journey")
-def learner_journey(learner_id: int, s: Session = Depends(m.db), ctx=Depends(m.current)):
+def learner_journey(learner_id: int, s: Session = Depends(m.db), ctx=Depends(m.require(*MANAGERS))):
     learner = s.scalar(select(m.Learner).where(m.Learner.id == learner_id, m.Learner.school_id == ctx["sid"]))
     if not learner:
         raise HTTPException(404, "Learner not found")
@@ -227,6 +227,10 @@ def add_observation(learner_id: int, data: ObservationIn, s: Session = Depends(m
         raise HTTPException(400, "Invalid level")
     if data.contributing_factor not in FACTORS:
         raise HTTPException(400, "Invalid contributing factor")
+    if data.domain in ("cognitive_assessment", "home_factor", "wellbeing", "emotional_eq") and ctx["role"] not in ("school_admin", "principal"):
+        raise HTTPException(403, "Sensitive assessments require school leadership authorisation")
+    if data.domain == "cognitive_assessment" and (data.source != "formal_assessment" or not data.summary.strip()):
+        raise HTTPException(422, "Cognitive assessment requires formal_assessment source and assessment provenance in summary")
     if data.domain == "cognitive_assessment" and data.score is None and not data.summary.strip():
         raise HTTPException(400, "Formal cognitive/IQ entries need a professional score or assessment summary")
     learner = s.scalar(select(m.Learner).where(m.Learner.id == learner_id, m.Learner.school_id == ctx["sid"]))
