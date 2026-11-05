@@ -2,7 +2,9 @@
 
 Run against a running test server. Requires SCHOOLCARE_URL and local DATABASE_URL.
 """
-import os
+import os,sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from uuid import uuid4
 from playwright.sync_api import sync_playwright
 from fastapi.testclient import TestClient
