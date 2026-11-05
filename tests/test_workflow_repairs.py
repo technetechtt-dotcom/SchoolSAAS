@@ -15,6 +15,7 @@ from app import main
 from app import pilot_pack  # noqa: F401
 from app import operations  # noqa: F401
 from app import learner_journey  # noqa: F401
+from tests.conftest import finish_required_onboarding
 import pyotp
 
 
@@ -53,6 +54,7 @@ def test_parent_invite_token_notice_ack_dispute_and_evidence_download():
         incident = send("/api/incidents", {
             "learner_id": learner["id"], "offence_id": offence["id"],
             "location": "Classroom", "description": "Demo", "immediate_action": "Talk"}).json()
+        finish_required_onboarding(c, send)
 
         invite = send("/api/parent-portal/invite", {
             "learner_id": learner["id"], "email": "guardian@example.test",

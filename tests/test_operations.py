@@ -7,6 +7,8 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from app import main
+from app import pilot_pack, operations, extended  # noqa: F401
+from tests.conftest import finish_required_onboarding
 
 def test_guardians_case_timeline_followups_and_classes():
     engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool)
@@ -31,6 +33,7 @@ def test_guardians_case_timeline_followups_and_classes():
         submit(a,"/api/offences",{"code":"B1","name":"Example","category":"Behaviour","severity":1})
         incident=submit(a,"/api/incidents",{"learner_id":student,"offence_id":1,"location":"Classroom",
             "description":"Imaginary event","immediate_action":"Discuss"}).json()["id"]
+        finish_required_onboarding(a, lambda path,payload=None,method="post": submit(a,path,payload or {},method))
         case=submit(a,"/api/cases",{"learner_id":student,"title":"Test case","incident_ids":[incident]}).json()["id"]
         assert submit(a,f"/api/cases/{case}/timeline",{"kind":"meeting","note":"Meeting planned"}).status_code==201
         assert len(a.get(f"/api/cases/{case}/timeline").json())==1

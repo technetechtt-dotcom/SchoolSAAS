@@ -174,6 +174,8 @@ def download_letter_pdf(letter_id: int, s: Session = Depends(m.db), ctx=Depends(
 @router.post("/letter-documents/{letter_id}/deliver")
 def deliver_letter(letter_id: int, data: LetterDeliverIn, s: Session = Depends(m.db),
                    ctx=Depends(m.require(*MANAGERS))):
+    from app.onboarding import assert_onboarding_complete
+    assert_onboarding_complete(s, ctx, "delivering formal letters")
     item = s.scalar(select(LetterDocument).where(LetterDocument.id == letter_id, LetterDocument.school_id == ctx["sid"]))
     if not item:
         raise HTTPException(404, "Letter not found")

@@ -12,6 +12,7 @@ os.environ.setdefault("MFA_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 from app import main
 from app import pilot_pack, operations, extended  # noqa: F401
+from tests.conftest import finish_required_onboarding
 
 
 def test_hearings_placements_appeals_and_intervention_due():
@@ -51,6 +52,7 @@ def test_hearings_placements_appeals_and_intervention_due():
         incident = send("/api/incidents", {
             "learner_id": learner["id"], "offence_id": offence["id"],
             "location": "Classroom", "description": "Demo", "immediate_action": "Talk"}).json()
+        finish_required_onboarding(c, send)
         case = send("/api/cases", {
             "learner_id": learner["id"], "title": "Support",
             "incident_ids": [incident["id"]]}).json()

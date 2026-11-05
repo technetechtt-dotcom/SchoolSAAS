@@ -618,6 +618,8 @@ def add_incident(data:IncidentIn,s:Session=Depends(db),ctx=Depends(require('scho
             'flag_reason':reason,'requires_review':flagged,'message':'Review flag only; no automatic punishment'}
 @app.post('/api/cases',status_code=201)
 def add_case(data:CaseIn,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    from app.onboarding import assert_onboarding_complete
+    assert_onboarding_complete(s,ctx,'opening a formal case')
     learner=s.scalar(select(Learner).where(Learner.id==data.learner_id,Learner.school_id==ctx['sid']))
     ids=set(data.incident_ids)
     matches=s.scalars(select(Incident).where(Incident.school_id==ctx['sid'],Incident.learner_id==data.learner_id,Incident.id.in_(ids))).all()
@@ -934,6 +936,8 @@ from app.session_security import router as session_security_router
 app.include_router(session_security_router)
 from app.account_security import router as account_security_router
 app.include_router(account_security_router)
+from app.learner_activity import router as learner_activity_router
+app.include_router(learner_activity_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 

@@ -164,19 +164,71 @@ def classes(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     rows=s.execute(select(m.Learner.grade,m.Learner.class_name,func.count()).where(m.Learner.school_id==ctx["sid"],m.Learner.active==True).group_by(m.Learner.grade,m.Learner.class_name).order_by(m.Learner.grade,m.Learner.class_name)).all()
     return [{"grade":r[0],"class_name":r[1],"learners":r[2]} for r in rows]
 
+def _safe_csv(value):
+    text_value="" if value is None else str(value)
+    # Spreadsheet applications may interpret leading formula characters as executable formulas.
+    if text_value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text_value
+    return text_value
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list], s: Session, ctx: dict, subject: str):
+    out=io.StringIO()
+    w=csv.writer(out)
+    w.writerow(header)
+    for row in rows:
+        w.writerow([_safe_csv(v) for v in row])
+    m.log(s,ctx,"export",subject,0);s.commit()
+    return Response(content=out.getvalue(),media_type="text/csv",
+                    headers={"Content-Disposition":f'attachment; filename="{filename}"',"Cache-Control":"no-store",
+                             "X-Content-Type-Options":"nosniff"})
+
+
+@router.get("/reports/exports")
+def list_exports(ctx=Depends(m.require(*ADMIN))):
+    return {"items":[
+        {"id":"incidents","label":"Incidents CSV","path":"/api/reports/incidents.csv"},
+        {"id":"learners","label":"Learners CSV","path":"/api/reports/learners.csv"},
+        {"id":"cases","label":"Cases CSV","path":"/api/reports/cases.csv"},
+        {"id":"interventions","label":"Interventions CSV","path":"/api/reports/interventions.csv"},
+    ],"notice":"Exports are administrator-only, audited, and formula-injection safe. Do not share downloads outside authorised staff."}
+
+
 @router.get("/reports/incidents.csv")
 def incident_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
     rows=s.scalars(select(m.Incident).where(m.Incident.school_id==ctx["sid"]).order_by(m.Incident.id).limit(10000)).all()
-    out=io.StringIO();w=csv.writer(out);w.writerow(["Incident ID","Learner ID","Offence ID","Location","Status","Created"])
-    def safe_csv(value):
-        text_value=str(value)
-        # Spreadsheet applications may interpret leading formula characters as executable formulas.
-        if text_value.lstrip().startswith(('=', '+', '-', '@', '\t', '\r')):
-            return "'" + text_value
-        return text_value
-    for x in rows:w.writerow([safe_csv(v) for v in (x.id,x.learner_id,x.offence_id,x.location,x.status,x.created_at.isoformat())])
-    m.log(s,ctx,"export","incidents",0);s.commit()
-    return Response(content=out.getvalue(),media_type="text/csv",headers={"Content-Disposition":'attachment; filename="school-incidents.csv"',"Cache-Control":"no-store"})
+    return _csv_response("school-incidents.csv",
+        ["Incident ID","Learner ID","Offence ID","Location","Status","Created"],
+        [[x.id,x.learner_id,x.offence_id,x.location,x.status,x.created_at.isoformat()] for x in rows],
+        s,ctx,"incidents")
+
+
+@router.get("/reports/learners.csv")
+def learners_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    rows=s.scalars(select(m.Learner).where(m.Learner.school_id==ctx["sid"]).order_by(m.Learner.surname).limit(20000)).all()
+    return _csv_response("school-learners.csv",
+        ["Learner ID","Admission","First name","Surname","Grade","Class","Active","Enrolled on","Grade started"],
+        [[x.id,x.admission_no,x.first_name,x.surname,x.grade,x.class_name,x.active,
+          getattr(x,"enrolled_on",None),getattr(x,"grade_started",None)] for x in rows],
+        s,ctx,"learners")
+
+
+@router.get("/reports/cases.csv")
+def cases_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    rows=s.scalars(select(m.Case).where(m.Case.school_id==ctx["sid"]).order_by(m.Case.id).limit(10000)).all()
+    return _csv_response("school-cases.csv",
+        ["Case ID","Learner ID","Title","Status","Assigned user","Public ref"],
+        [[x.id,x.learner_id,x.title,x.status,x.assigned_user_id,getattr(x,"public_ref",None)] for x in rows],
+        s,ctx,"cases")
+
+
+@router.get("/reports/interventions.csv")
+def interventions_export(s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
+    rows=s.scalars(select(m.Intervention).where(m.Intervention.school_id==ctx["sid"]).order_by(m.Intervention.id).limit(10000)).all()
+    return _csv_response("school-interventions.csv",
+        ["Intervention ID","Incident ID","Type","Outcome","Due at","Owner user"],
+        [[x.id,x.incident_id,x.type,x.outcome,x.due_at.isoformat() if x.due_at else "",x.owner_user_id] for x in rows],
+        s,ctx,"interventions")
 
 @router.get("/notifications")
 def notifications(s:Session=Depends(m.db),ctx=Depends(m.current)):
@@ -192,6 +244,8 @@ def appeals(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
 
 @router.post("/appeals",status_code=201)
 def add_appeal(data:AppealIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    from app.onboarding import assert_onboarding_complete
+    assert_onboarding_complete(s,ctx,"recording an appeal")
     school_record(s,m.Case,data.case_id,ctx["sid"])
     if data.hearing_id is not None:
         from app.pilot_pack import Hearing

@@ -14,6 +14,7 @@ os.environ.pop("BILLING_WEBHOOK_SECRET", None)
 
 from app import main
 from app import pilot_pack, operations, extended, session_security, account_security  # noqa: F401
+from tests.conftest import finish_required_onboarding
 
 
 def test_mfa_recovery_security_events_and_parent_inbox():
@@ -110,6 +111,8 @@ def test_mfa_recovery_security_events_and_parent_inbox():
         learner = send("/api/learners", {
             "admission_no": "SEC1", "first_name": "Aneesa", "surname": "Pillay",
             "grade": "2", "class_name": "2A"}).json()
+        send("/api/offences", {"code": "S1", "name": "Support", "category": "Behaviour", "severity": 1})
+        finish_required_onboarding(c, send)
         invite = send("/api/parent-portal/invite", {
             "learner_id": learner["id"], "email": "guardian@secure.test",
             "subject": "Meeting about support plan"})

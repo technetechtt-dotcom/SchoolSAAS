@@ -396,6 +396,15 @@ async function details(key,id){
  if(d.cases)content+=panel(table(["Case","Title","Status"],d.cases.map(x=>[link("#"+x.id,"cases",x.id),plain(x.title),pill(x.status)])),"Cases");
  if(manager()){const guardians=await api("guardians?learner_id="+d.id);content+=panel(table(["Name","Relationship","Email","Phone"],guardians.map(x=>[plain(x.name),plain(x.relationship),plain(x.email),plain(x.phone)]))+
  btn("Add guardian","add-guardian",d.id),"Guardian contacts")}
+ try{
+  const act=await api("learners/"+d.id+"/activity");
+  content+=panel('<p class="subtle">'+esc(act.notice||"")+'</p>'+
+   table(["When","Type","Title","Detail","Status","Link"],(act.items||[]).map(x=>[
+    plain((x.at||"").slice(0,16)),pill(x.kind),plain(x.title),plain(x.detail||"—"),pill(x.status||"—"),
+    (x.ref_type==="incident"&&x.ref_id?link("#"+x.ref_id,"incidents",x.ref_id):
+     x.ref_type==="case"&&x.ref_id?link("#"+x.ref_id,"cases",x.ref_id):plain("—"))
+   ])),"Activity timeline");
+ }catch(e){content+=panel('<p class="subtle">'+esc(e.message)+'</p>',"Activity timeline")}
  $("page").innerHTML=content;return;
  }
  if(key==="incidents"){
@@ -425,9 +434,11 @@ async function details(key,id){
  }
 }
 async function reports(filters={}){
- const [r,stats,filtered]=await Promise.all([api("reports/summary"),api("analytics/overview"),api("reports/filtered?"+new URLSearchParams(filters))]);
+ const [r,stats,filtered,exports]=await Promise.all([api("reports/summary"),api("analytics/overview"),api("reports/filtered?"+new URLSearchParams(filters)),admin()?api("reports/exports"):Promise.resolve({items:[]})]);
  const make=(obj)=>table(["Category","Incident count"],Object.entries(obj).map(x=>[plain(x[0]),plain(x[1])]));
- $("page").innerHTML=head("Reports","Filter school records by date, grade and class. Exports are administrator-only.",admin()?'<a class="btn secondary" href="/api/reports/incidents.csv">Download CSV</a>':"")+
+ const exportBtns=admin()?(exports.items||[]).map(x=>'<a class="btn secondary" href="'+esc(x.path)+'">'+esc(x.label)+'</a>').join(" "):"";
+ $("page").innerHTML=head("Reports","Filter school records by date, grade and class. Exports are administrator-only.",exportBtns)+
+ (admin()?panel('<p class="subtle">'+esc(exports.notice||"Exports are audited.")+'</p>',"Controlled CSV exports"):"")+
  panel('<form id="report-filters" class="grid2">'+input("start","From date","date",filters.start||"")+input("end","To date","date",filters.end||"")+
  input("grade","Grade","text",filters.grade||"")+input("class_name","Class","text",filters.class_name||"")+
  '<button type="submit">Apply report filters</button><button type="button" class="secondary" id="clear-reports">Clear filters</button></form>','Report filters')+

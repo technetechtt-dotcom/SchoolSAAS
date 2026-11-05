@@ -456,6 +456,8 @@ def get_hearing(hearing_id: int, s: Session = Depends(m.db),
 
 @router.post("/hearings", status_code=201)
 def add_hearing(data: HearingIn, s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal", "smt"))):
+    from app.onboarding import assert_onboarding_complete
+    assert_onboarding_complete(s, ctx, "scheduling a hearing")
     case = s.scalar(select(m.Case).where(m.Case.id == data.case_id, m.Case.school_id == ctx["sid"]))
     if not case:
         raise HTTPException(404, "Case not found")
@@ -673,6 +675,8 @@ def _deliver_parent_invite(item: ParentAccess, learner: m.Learner, token: str, s
 @router.post("/parent-portal/invite", status_code=201)
 def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
                   ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    from app.onboarding import assert_onboarding_complete
+    assert_onboarding_complete(s, ctx, "sending parent notices")
     learner = s.scalar(select(m.Learner).where(m.Learner.id == data.learner_id, m.Learner.school_id == ctx["sid"]))
     if not learner:
         raise HTTPException(404, "Learner not found")

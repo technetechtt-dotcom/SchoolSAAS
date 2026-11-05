@@ -7,6 +7,8 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from app import main
+from app import pilot_pack, operations, extended  # noqa: F401
+from tests.conftest import finish_required_onboarding
 
 def test_extended_workflows_and_tenant_boundaries():
     engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool)
@@ -29,6 +31,7 @@ def test_extended_workflows_and_tenant_boundaries():
         i=write(a,"/api/incidents",{"learner_id":l,"offence_id":1,"location":"Classroom","description":"Fictional sample","immediate_action":"Referral"}).json()["id"]
         assert a.get("/api/incidents/"+str(i)).status_code==200
         assert b.get("/api/incidents/"+str(i)).status_code==404
+        finish_required_onboarding(a, lambda path,payload=None,method="post": write(a,path,payload or {},method))
         case=write(a,"/api/cases",{"learner_id":l,"title":"Example case","incident_ids":[i]}).json()["id"]
         assert a.get("/api/cases/"+str(case)).json()["incident_ids"]==[i]
         assert b.get("/api/cases/"+str(case)).status_code==404

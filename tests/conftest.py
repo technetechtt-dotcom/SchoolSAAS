@@ -3,6 +3,33 @@ from __future__ import annotations
 import os
 import pytest
 
+def finish_required_onboarding(client, send):
+    """Complete required auto-detected onboarding steps for gated formal workflows.
+
+    Caller must already have at least one learner and one offence at the school.
+    """
+    assert send("/api/settings/academic", {
+        "academic_year": 2026, "term": 1, "school_contact_email": "office@test.local"
+    }, "put").status_code == 200
+    assert send("/api/settings", {
+        "repeat_threshold": 3, "repeat_window_days": 30,
+        "repeat_similar_threshold": 2, "repeat_total_threshold": 5,
+        "follow_up_default_days": 7,
+        "incident_prefix": "INC", "case_prefix": "CASE", "admission_prefix": "ADM"
+    }, "put").status_code == 200
+    status = client.get("/api/onboarding/status").json()
+    if not any(x["id"] == "code_of_conduct" and x["completed"] for x in status["items"]):
+        coc = send("/api/conduct-versions", {
+            "version_label": "v1", "title": "Code of Conduct",
+            "effective_from": "2026-01-01T00:00:00+00:00",
+            "body": "Respect, safety and fairness."
+        })
+        assert coc.status_code == 201, coc.text
+        assert send(f"/api/conduct-versions/{coc.json()['id']}/approve", {}, "patch").status_code == 200
+    status = client.get("/api/onboarding/status").json()
+    assert status["complete"] is True, status
+
+
 _ENV_KEYS = (
     "JWT_SECRET",
     "DATABASE_URL",

@@ -13,6 +13,7 @@ os.environ.pop("SMTP_HOST", None)
 
 from app import main
 from app import pilot_pack  # noqa: F401
+from tests.conftest import finish_required_onboarding
 import pyotp
 
 
@@ -86,6 +87,7 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
             "location": "Classroom", "description": "Arrived late",
             "immediate_action": "Verbal correction"})
         assert incident.status_code == 201
+        finish_required_onboarding(c, send)
         case = send("/api/cases", {
             "learner_id": learner.json()["id"], "title": "Punctuality support",
             "incident_ids": [incident.json()["id"]]})

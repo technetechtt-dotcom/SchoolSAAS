@@ -98,6 +98,18 @@ def compute_onboarding(s: Session, ctx: dict) -> dict:
     }
 
 
+def assert_onboarding_complete(s: Session, ctx: dict, workflow: str = "this workflow"):
+    """Block sensitive formal workflows until required school setup is complete."""
+    status = compute_onboarding(s, ctx)
+    if status["complete"]:
+        return status
+    outstanding = [x["id"] for x in status["items"] if x["required"] and not x["completed"]]
+    raise HTTPException(
+        409,
+        f"Complete school setup before {workflow}. Outstanding: " + (", ".join(outstanding) or "required steps"),
+    )
+
+
 @router.get("/onboarding/status")
 def onboarding_status(s: Session = Depends(m.db), ctx=Depends(m.require(*MANAGERS))):
     return compute_onboarding(s, ctx)
