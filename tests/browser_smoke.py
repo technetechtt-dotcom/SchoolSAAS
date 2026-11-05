@@ -12,6 +12,8 @@ slug="browser-"+uuid4().hex[:12]
 with sync_playwright() as playwright:
     browser=playwright.chromium.launch(headless=True)
     page=browser.new_page(viewport={"width":1280,"height":800})
+    page.on("pageerror", lambda error: print("BROWSER JAVASCRIPT ERROR:", str(error), flush=True))
+    page.on("console", lambda message: print("BROWSER CONSOLE:",message.text,flush=True) if message.type=="error" else None)
     page.goto(url,wait_until="networkidle")
     page.locator("#school-name").fill("Fictional Browser School")
     page.locator("#new-slug").fill(slug)
@@ -20,7 +22,9 @@ with sync_playwright() as playwright:
     page.locator("#register button").click()
     page.locator("#app-shell:not([hidden])").wait_for(timeout=15000)
     page.locator('[data-go="learners"]').click()
-    page.get_by_role("heading",name="Learners").wait_for()
+    page.wait_for_timeout(1500)
+    if not page.get_by_role("heading",name="Learners",exact=True).is_visible():
+        raise AssertionError("Learner navigation failed; URL="+page.url+"; page="+page.locator("#page").inner_text()[:2500])
     page.get_by_role("button",name="Add learner").click()
     page.locator('#dialog input[name="first_name"]').fill("Demo")
     page.locator('#dialog input[name="surname"]').fill("Student")
