@@ -9,6 +9,7 @@ from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Integer, Uni
 from sqlalchemy.orm import Session, Mapped, mapped_column
 from app import main as m
 from app import mailer
+from app import mfa_crypto
 
 try:
     import pyotp
@@ -218,7 +219,7 @@ def mfa_setup(s: Session = Depends(m.db), ctx=Depends(m.current)):
     if not user:
         raise HTTPException(404, "User not found")
     secret = pyotp.random_base32()
-    user.mfa_secret = secret
+    user.mfa_secret = mfa_crypto.encrypt_secret(secret)
     user.mfa_enabled = False
     s.commit()
     uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name="SchoolCare")
@@ -231,7 +232,7 @@ def mfa_enable(data: MfaConfirm, s: Session = Depends(m.db), ctx=Depends(m.curre
     user = s.get(m.User, ctx["uid"])
     if not user or not user.mfa_secret:
         raise HTTPException(400, "Run MFA setup first")
-    if not pyotp.TOTP(user.mfa_secret).verify(data.code, valid_window=1):
+    if not pyotp.TOTP(mfa_crypto.decrypt_secret(user.mfa_secret)).verify(data.code, valid_window=1):
         raise HTTPException(401, "Invalid MFA code")
     user.mfa_enabled = True
     s.commit()
@@ -244,7 +245,7 @@ def mfa_disable(data: MfaConfirm, s: Session = Depends(m.db), ctx=Depends(m.curr
     user = s.get(m.User, ctx["uid"])
     if not user or not user.mfa_enabled or not user.mfa_secret:
         return {"ok": True, "mfa_enabled": False}
-    if not pyotp.TOTP(user.mfa_secret).verify(data.code, valid_window=1):
+    if not pyotp.TOTP(mfa_crypto.decrypt_secret(user.mfa_secret)).verify(data.code, valid_window=1):
         raise HTTPException(401, "Invalid MFA code")
     user.mfa_enabled = False
     user.mfa_secret = None
@@ -259,7 +260,7 @@ def mfa_verify_login(data: MfaLogin, response: Response, s: Session = Depends(m.
     user = s.get(m.User, uid)
     if not user or not user.mfa_enabled or not user.mfa_secret:
         raise HTTPException(400, "MFA not enabled")
-    if not pyotp.TOTP(user.mfa_secret).verify(data.code, valid_window=1):
+    if not pyotp.TOTP(mfa_crypto.decrypt_secret(user.mfa_secret)).verify(data.code, valid_window=1):
         raise HTTPException(401, "Invalid MFA code")
     mem = s.scalar(select(m.Membership).where(m.Membership.user_id == uid, m.Membership.school_id == sid))
     school = s.get(m.School, sid)
