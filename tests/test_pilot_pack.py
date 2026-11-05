@@ -46,6 +46,9 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
         secret = setup.json()["secret"]
         code = pyotp.TOTP(secret).now()
         assert send("/api/mfa/enable", {"code": code}).status_code == 200
+        with TestingSession() as db_session:
+            stored=db_session.get(main.User,me["uid"]).mfa_secret
+            assert stored.startswith("enc:") and stored != secret
 
         send("/api/logout", {})
         login = send("/api/login", {
@@ -88,6 +91,10 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
             "case_id": case.json()["id"], "scheduled_at": "2026-02-01T10:00:00+00:00",
             "chair": "Principal", "notes": "Supportive discussion"})
         assert hearing.status_code == 201
+        assert send(f"/api/hearings/{hearing.json()['id']}", {
+            "status":"completed","outcome":""}, "patch").status_code == 422
+        assert send(f"/api/hearings/{hearing.json()['id']}", {
+            "status":"completed","outcome":"Human reviewed outcome: support plan"}, "patch").status_code == 200
 
         up = c.post("/api/evidence",
                     data={"incident_id": str(incident.json()["id"])},
@@ -110,13 +117,17 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
             "subject": "Notice"})
         assert invite.status_code == 201
         assert "token" in invite.json()
+        assert send("/api/parent-portal/acknowledge", {
+            "token": invite.json()["token"], "subject": "Forged other notice"}).status_code == 400
         ack = send("/api/parent-portal/acknowledge", {
             "token": invite.json()["token"], "subject": "Notice"})
         assert ack.status_code == 200
 
         inv = send("/api/billing/invoices", {"amount_cents": 25000, "description": "Trial"})
         assert inv.status_code == 201
+        before_plan=c.get("/api/subscription").json()["plan"]
         assert send(f"/api/billing/invoices/{inv.json()['id']}/mark-paid", {}).status_code == 200
+        assert c.get("/api/subscription").json()["plan"] == before_plan
 
         assert c.get("/api/privacy/status").json()["popia_assessment_complete"] is False
         assert send("/api/privacy/retention", {
