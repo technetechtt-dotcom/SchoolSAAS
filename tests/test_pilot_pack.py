@@ -46,6 +46,7 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
         secret = setup.json()["secret"]
         code = pyotp.TOTP(secret).now()
         assert send("/api/mfa/enable", {"code": code}).status_code == 200
+        assert send("/api/mfa/setup", {}).status_code == 409
         with TestingSession() as db_session:
             stored=db_session.get(main.User,me["uid"]).mfa_secret
             assert stored.startswith("enc:") and stored != secret
