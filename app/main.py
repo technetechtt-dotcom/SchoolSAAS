@@ -228,6 +228,13 @@ def _ensure_sqlite_columns():
             ('attendance_notes', 'TEXT DEFAULT \'\''),
             ('procedural_checks', 'TEXT DEFAULT \'\''),
         ],
+        'parent_access_tokens': [
+            ('created_at', 'DATETIME'),
+            ('delivery_status', "VARCHAR(40) DEFAULT 'pending'"),
+            ('delivery_attempts', 'INTEGER DEFAULT 0'),
+            ('delivery_notes', "TEXT DEFAULT ''"),
+            ('last_delivery_at', 'DATETIME'),
+        ],
     }
     with engine.begin() as conn:
         for table, cols in planned.items():
@@ -257,6 +264,8 @@ def startup():
     # Local prototype only; deployment must run Alembic with auto creation disabled.
     if os.getenv("SCHEMA_AUTO_CREATE","true").lower() == "true":
         import app.learner_journey  # noqa: F401 — register journey tables on Base.metadata
+        import app.onboarding  # noqa: F401
+        import app.letter_workflow  # noqa: F401
         Base.metadata.create_all(engine)
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
@@ -724,14 +733,42 @@ def patch_learner(learner_id:int,data:LearnerPatch,s:Session=Depends(db),ctx=Dep
     for k,v in data.model_dump(exclude_none=True).items():setattr(x,k,v)
     log(s,ctx,'update','learner',x.id);s.commit();return {'ok':True}
 
+@app.get('/api/incidents/{incident_id}/closure-checklist')
+def incident_closure_checklist(incident_id:int,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
+    i=s.scalar(select(Incident).where(Incident.id==incident_id,Incident.school_id==ctx['sid']))
+    if not i:raise HTTPException(404,'Incident not found')
+    interventions=s.scalars(select(Intervention).where(Intervention.school_id==ctx['sid'],Intervention.incident_id==i.id)).all()
+    open_iv=[x for x in interventions if x.outcome in ('pending','follow_up')]
+    reviewed=i.review_status in ('verified','referred','resolved','withdrawn','disputed')
+    notes_ok=bool((i.review_notes or '').strip()) if i.review_status in ('resolved','withdrawn') else True
+    items=[
+        {"id":"reviewed","label":"Incident reviewed by authorised staff","required":True,"done":reviewed},
+        {"id":"notes","label":"Review notes recorded for resolution/withdrawal","required":i.review_status in ('resolved','withdrawn'),"done":notes_ok or i.review_status not in ('resolved','withdrawn')},
+        {"id":"interventions","label":"No open/pending interventions on this incident","required":True,"done":len(open_iv)==0},
+    ]
+    blocking=[x["id"] for x in items if x["required"] and not x["done"]]
+    return {"incident_id":i.id,"status":i.status,"review_status":i.review_status,
+            "ready_to_close":len(blocking)==0 and i.status not in ('resolved','withdrawn'),
+            "blocking":blocking,"items":items}
+
+
 @app.patch('/api/incidents/{incident_id}/review')
 def patch_incident(incident_id:int,data:ReviewPatch,s:Session=Depends(db),ctx=Depends(require('school_admin','principal','smt','hod'))):
     if data.status not in ('pending','verified','disputed','referred','resolved','withdrawn'):
         raise HTTPException(400,'Invalid status')
     i=s.scalar(select(Incident).where(Incident.id==incident_id,Incident.school_id==ctx['sid']))
     if not i:raise HTTPException(404,'Incident not found')
-    i.review_status=data.status;i.review_notes=data.notes
-    if data.status in ('resolved','withdrawn'):i.status=data.status
+    if data.status in ('resolved','withdrawn'):
+        # Temporarily apply proposed review fields for checklist evaluation
+        previous_status, previous_notes = i.review_status, i.review_notes
+        i.review_status=data.status;i.review_notes=data.notes
+        check=incident_closure_checklist(incident_id,s,ctx)
+        if check["blocking"]:
+            i.review_status, i.review_notes = previous_status, previous_notes
+            raise HTTPException(409,'Incident closure checklist incomplete: '+', '.join(check['blocking']))
+        i.status=data.status
+    else:
+        i.review_status=data.status;i.review_notes=data.notes
     log(s,ctx,'review','incident',i.id);s.commit();return {'ok':True}
 
 # Formal case transitions (closure is checklist-only via POST /cases/{id}/close).
@@ -843,6 +880,10 @@ from app.learner_journey import router as journey_router
 app.include_router(journey_router)
 from app.intervention_recommend import router as recommend_router
 app.include_router(recommend_router)
+from app.onboarding import router as onboarding_router
+app.include_router(onboarding_router)
+from app.letter_workflow import router as letter_workflow_router
+app.include_router(letter_workflow_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 

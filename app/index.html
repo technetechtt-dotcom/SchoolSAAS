@@ -117,12 +117,12 @@ const groups=[
  ["BEHAVIOUR",[["incidents","Incidents"],["codes","Offence codes"],["cases","Cases"],["interventions","Interventions"],["appeals","Appeals"],["hearings","Hearings"],["evidence","Evidence"]]],
  ["COMMUNICATION",[["contacts","Parent contacts"],["guardians","Guardians"],["appointments","Meetings"],["documents","Document drafts"],["letters","Letter templates"],["parent-acks","Parent acknowledgements"]]],
  ["ANALYTICS",[["reports","Reports"]]],
- ["ADMINISTRATION",[["offences","Offences"],["conduct","Code of Conduct"],["staff","Staff & access"],["settings","Settings"],["security","Security & MFA"],["privacy","Privacy & retention"],["subscription","Subscription"],["billing","Billing"],["platform","Platform"],["audit","Audit log"]]]
+ ["ADMINISTRATION",[["onboarding","School setup"],["offences","Offences"],["conduct","Code of Conduct"],["staff","Staff & access"],["settings","Settings"],["security","Security & MFA"],["privacy","Privacy & retention"],["subscription","Subscription"],["billing","Billing"],["platform","Platform"],["audit","Audit log"]]]
 ];
 const manager=()=>user&&["school_admin","principal","smt","hod"].includes(user.role);
 const admin=()=>user&&["school_admin","principal"].includes(user.role);
 const allowed=key=>!["tasks","cases","interventions","appeals","contacts","appointments","documents","reports","classes","guardians","class-assignments","hearings","evidence","letters","parent-acks","conduct"].includes(key)||manager()||key==="guide";
-const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","privacy","billing","platform"].includes(key)||admin())&&(key!=="platform"||user.platform_admin);
+const can=key=>allowed(key)&&(!["staff","settings","subscription","audit","privacy","billing","platform","onboarding"].includes(key)||admin()||(key==="onboarding"&&manager()))&&(key!=="platform"||user.platform_admin);
 const input=(name,label,type="text",value="",extra="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><input id="field-'+esc(name)+'" name="'+esc(name)+'" type="'+esc(type)+'" value="'+esc(value)+'" '+extra+'></div>';
 const area=(name,label,value="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><textarea id="field-'+esc(name)+'" name="'+esc(name)+'">'+esc(value)+'</textarea></div>';
 const options=(name,label,items,current="")=>'<div><label for="field-'+esc(name)+'">'+esc(label)+'</label><select id="field-'+esc(name)+'" name="'+esc(name)+'">'+items.map(x=>'<option value="'+esc(x[0])+'" '+(String(x[0])===String(current)?"selected":"")+'>'+esc(x[1])+'</option>').join("")+'</select></div>';
@@ -168,9 +168,10 @@ let recPref={type:"",incidentId:"",notes:""};
 const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
- const [d,n,stats,warn,hot,reps,irec]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations")]);
+ const [d,n,stats,warn,hot,reps,irec,setup]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations"),api("onboarding/status")]);
  const metric=(label,value,go)=>'<button type="button" class="metric" data-go="'+esc(go)+'" style="text-align:left;cursor:pointer;width:100%"><small>'+esc(label)+'</small><strong>'+esc(value)+'</strong></button>';
  $("page").innerHTML=head("Good day, "+d.school,"Capture once — history, reviews, interventions and trends update automatically",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+
+ (!setup.complete?panel('<p><strong>School setup '+esc(setup.progress_percent)+'% complete.</strong> '+esc(setup.message)+'</p>'+btn("Continue setup","go-onboarding","",false),"Onboarding required"):"")+
  '<div class="cards">'+metric("Learners",d.learners,"learners")+metric("Incidents",d.incidents,"incidents")+metric("Open cases",d.open_cases,"cases")+'</div>'+
  '<div class="cards">'+metric("Early warning · overdue interventions",warn.counts.overdue_interventions,"interventions")+metric("Outstanding parent meetings",warn.counts.overdue_appointments,"appointments")+metric("Auto intervention needs",(irec.counts&&irec.counts.learners_flagged)||0,"learners")+metric("Serious / open reviews",warn.counts.serious_open+" / "+warn.counts.open_reviews,"tasks")+'</div>'+
  panel(table(["Intervention","Incident","Due","Outcome"],(warn.overdue_interventions||[]).slice(0,8).map(x=>[
@@ -384,8 +385,16 @@ async function details(key,id){
  }
  if(key==="incidents"){
  let actions=manager()?btn("Review incident","review-incident",id):"";
+ let checklistHtml="";
+ if(manager()){
+  try{
+   const ck=await api("incidents/"+id+"/closure-checklist");
+   checklistHtml=panel(table(["Check","Required","Status"],(ck.items||[]).map(x=>[plain(x.label),pill(x.required?"required":"optional"),pill(x.done?"done":"outstanding")]))+
+    '<p class="subtle">'+(ck.ready_to_close?"Ready to resolve/withdraw.":"Resolve/withdraw blocked until checklist items are complete.")+'</p>',"Incident closure checklist");
+  }catch(e){checklistHtml=panel('<p class="subtle">'+esc(e.message)+'</p>',"Incident closure checklist")}
+ }
  $("page").innerHTML=breadcrumb+head(d.public_ref||("Incident #"+id),"Reported "+d.created_at.slice(0,16),actions)+
- panel(table(["Field","Details"],[["Reference",plain(d.public_ref||"#"+id)],["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Flag reason",pill(d.flag_reason||"none")],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details");return;
+ panel(table(["Field","Details"],[["Reference",plain(d.public_ref||"#"+id)],["Learner",link(d.learner_name,"learners",d.learner_id)],["Offence",plain(d.offence)],["Severity",plain(d.severity)],["Location",plain(d.location)],["Description",plain(d.description)],["Immediate action",plain(d.immediate_action)],["Status",pill(d.status)],["Flag reason",pill(d.flag_reason||"none")],["Review",pill(d.review_status)],["Review notes",plain(d.review_notes||"—")]]),"Incident details")+checklistHtml;return;
  }
  if(key==="cases"){
  const [events,tasks,checklist]=await Promise.all([api("cases/"+id+"/timeline"),api("cases/"+id+"/follow-ups"),api("cases/"+id+"/closure-checklist")]);
@@ -455,15 +464,34 @@ async function evidencePage(){
   btn("View","view-evidence",x.id)+" "+btn("Download","download-evidence",x.id)])));
 }
 async function lettersPage(){
- const d=await api("letter-templates");$("page").innerHTML=head("Letter templates","Plain-text drafts only — not sent to guardians",btn("New template","create-letter","",false))+
- panel(table(["Code","Name","Actions"],d.map(x=>[plain(x.code),plain(x.name),btn("Render","render-letter",x.id)])));
+ const [d,docs]=await Promise.all([api("letter-templates"),api("letter-documents")]);
+ $("page").innerHTML=head("Letters","Templates, approval, PDF and delivery tracking",btn("New template","create-letter","",false)+btn("Create letter draft","create-letter-doc","",false))+
+ panel(table(["Code","Name","Actions"],d.map(x=>[plain(x.code),plain(x.name),btn("Preview","render-letter",x.id)])),"Templates")+
+ panel(table(["ID","Title","Learner","Status","Delivery","Actions"],(docs||[]).map(x=>[
+  plain(x.id),plain(x.title),link("#"+x.learner_id,"learners",x.learner_id),pill(x.status),
+  plain(x.delivery_to||x.delivery_notes||"—"),
+  (x.status==="draft"?btn("Approve + PDF","approve-letter",x.id):"")+
+  (x.has_pdf?btn("PDF","download-letter-pdf",x.id):"")+
+  (x.status==="approved"?btn("Deliver","deliver-letter",x.id):"")
+ ])),"Letter documents");
+}
+async function onboardingPage(){
+ const d=await api("onboarding/status");
+ $("page").innerHTML=head("School setup","Onboarding checklist before full operational use")+
+ '<div class="cards"><div class="metric"><small>Setup progress</small><strong>'+esc(d.progress_percent)+'%</strong></div><div class="metric"><small>Required complete</small><strong>'+esc(d.required_done)+" / "+esc(d.required_total)+'</strong></div><div class="metric"><small>Status</small><strong>'+(d.complete?"Ready":"In progress")+'</strong></div></div>'+
+ panel('<p class="subtle">'+esc(d.message)+'</p>'+table(["Step","Required","Status","Source","Action"],(d.items||[]).map(x=>[
+  plain(x.label),pill(x.required?"required":"optional"),pill(x.completed?"done":"outstanding"),
+  plain(x.auto_detected?"auto":"manual"),
+  (!x.completed&&admin()?btn("Mark done","mark-onboarding",x.id):x.completed?plain("—"):plain("Complete in settings"))
+ ])),"Onboarding steps");
 }
 async function parentAcksPage(){
  const [acks,notices,disputes]=await Promise.all([api("parent-acknowledgements"),api("parent-portal/notices"),api("parent-portal/disputes")]);
  $("page").innerHTML=head("Parent communications","Invites, acknowledgements, delivery history and disputes",btn("Invite parent","invite-parent","",false))+
- panel(table(["Learner","Email","Subject","Status","Delivery","Expires","Issued"],(notices||[]).map(x=>[
+ panel(table(["Learner","Email","Subject","Status","Delivery","Attempts","Expires","Action"],(notices||[]).map(x=>[
   link("#"+x.learner_id,"learners",x.learner_id),plain(x.email),plain(x.subject),pill(x.status),
-  pill(x.delivery),plain((x.expires_at||"").slice(0,10)),plain((x.created_at||"").slice(0,19))
+  pill(x.delivery),plain(x.delivery_attempts||0),plain((x.expires_at||"").slice(0,10)),
+  x.can_resend?btn("Resend","resend-parent-notice",x.id):plain("—")
  ])),"Delivery & notice history")+
  panel(table(["Learner","Subject","Email","When"],(acks||[]).map(x=>[link("#"+x.learner_id,"learners",x.learner_id),plain(x.subject),plain(x.email),plain(x.acknowledged_at.slice(0,19))])),"Acknowledgements")+
  panel(table(["Learner","Subject","Email","Reason","Status","When","Action"],(disputes||[]).map(x=>[
@@ -532,6 +560,7 @@ async function render(){
  else if(key==="hearings")await hearingsPage();
  else if(key==="evidence")await evidencePage();
  else if(key==="letters")await lettersPage();
+ else if(key==="onboarding")await onboardingPage();
  else if(key==="parent-acks")await parentAcksPage();
  else if(key==="security")await securityPage();
  else if(key==="privacy")await privacyPage();
@@ -647,6 +676,28 @@ async function openAction(action,id){
   break;}
  case "upload-evidence":name="Upload evidence";kind="upload-evidence";body=input("incident_id","Incident ID (optional)","number")+input("case_id","Case ID (optional)","number")+'<div><label for="evidence-file">File</label><input id="evidence-file" name="file" type="file" required></div>';break;
  case "create-letter":name="New letter template";kind="letter-templates";body=input("code","Code","text","","required")+input("name","Name","text","","required")+area("body","Body (use {{learner_name}}, {{grade}}, {{class_name}}, {{school}}, {{date}})");break;
+ case "create-letter-doc":{
+  const tpls=await api("letter-templates");
+  name="Create letter document";kind="letter-documents";
+  body=await learnerPicker()+options("template_id","Template (optional)",[["","— none —"]].concat((tpls||[]).map(x=>[x.id,x.code+" · "+x.name])))+
+   input("title","Title","text","","required")+area("body","Letter body","Dear guardian,\n\n")+
+   '<p class="subtle">If a template is selected, its body replaces the text above after merge.</p>';
+  break;}
+ case "approve-letter":await api("letter-documents/"+id+"/approve","POST",{});toast("Letter approved and PDF generated");navigate("letters");return;
+ case "download-letter-pdf":{
+  const response=await fetch("/api/letter-documents/"+id+"/pdf",{credentials:"same-origin",headers:{...(csrf()?{"X-CSRF-Token":csrf()}:{})}});
+  if(!response.ok){let msg="PDF download failed";try{const j=await response.json();msg=j.detail||msg}catch(_){}throw Error(typeof msg==="string"?msg:msg); }
+  const blob=await response.blob();const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download="letter-"+id+".pdf";document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);toast("PDF download started");return;}
+ case "deliver-letter":name="Deliver approved letter";kind="letter-deliver:"+id;body=input("email","Guardian email","email","","required")+options("channel","Channel",[["email","Email"],["hand","Hand delivery"]]);break;
+ case "mark-onboarding":await api("onboarding/steps","POST",{step_id:id,completed:true,notes:"Marked complete in school setup"});toast("Onboarding step marked complete");navigate("onboarding");return;
+ case "resend-parent-notice":{
+  const r=await api("parent-portal/notices/"+id+"/resend","POST",{});
+  if(r.emailed){toast(r.notice||"Notice resent by email");navigate("parent-acks");return}
+  if(r.token){const link=location.origin+"/#parent="+encodeURIComponent(r.token);
+   modal("Share resent invitation",panel('<p class="subtle">'+esc(r.notice||"Share privately.")+'</p><div><label>Private link</label><textarea readonly>'+esc(link)+'</textarea></div><div class="form-actions"><button type="button" class="secondary" data-action="close">Done</button></div>'));return}
+  toast(r.notice||"Resend recorded");navigate("parent-acks");return;}
  case "render-letter":name="Render letter draft";kind="render-letter:"+id;body=input("learner_id","Learner ID","number","","required");break;
  case "invite-parent":name="Invite parent acknowledgement";kind="parent-portal/invite";body=input("learner_id","Learner ID","number","","required")+input("email","Guardian email","email","","required")+input("subject","Subject","text","SchoolCare notice","required")+'<p class="subtle">If SMTP is not configured, a private token will be shown for secure sharing.</p>';break;
  case "view-evidence":await openEvidence(id,"inline");return;
@@ -732,6 +783,8 @@ async function submitForm(f){
  if(k==="hearings"){data.scheduled_at=new Date(data.scheduled_at).toISOString();go="hearings"}
  if(prefix==="hearing-update"){url="hearings/"+id;method="PATCH";go="hearings"}
  if(k==="letter-templates")go="letters"
+ if(k==="letter-documents"){if(!data.template_id)delete data.template_id;else data.template_id=Number(data.template_id);go="letters"}
+ if(prefix==="letter-deliver"){url="letter-documents/"+id+"/deliver";go="letters"}
  if(prefix==="render-letter"){url="letter-templates/"+id+"/render?learner_id="+encodeURIComponent(data.learner_id);method="POST";const rendered=await api(url,method,{});modal(rendered.name,panel('<pre style="white-space:pre-wrap">'+esc(rendered.rendered_text)+'</pre><p class="subtle">Draft only — not emailed or posted. Close this dialog when finished.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close preview</button></div>'));return}
  if(k==="parent-portal/invite")go="parent-acks"
  if(k==="parent-portal/acknowledge"){go="";}
@@ -852,6 +905,7 @@ document.addEventListener("click",async e=>{
   if(x==="go-learners"){navigate("learners");return}
   if(x==="go-guide"){navigate("guide");return}
   if(x==="go-offences"){navigate("offences");return}
+  if(x==="go-onboarding"){navigate("onboarding");return}
   if(x==="remove-class"){if(!confirm("Remove class assignment?"))return;try{await api("class-assignments/"+a.dataset.id,"DELETE");toast("Removed");render()}catch(err){toast(err.message,true)}return}
   try{await openAction(x,a.dataset.id)}catch(err){toast(err.message,true)}
  }

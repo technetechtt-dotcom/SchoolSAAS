@@ -83,6 +83,11 @@ class ParentAccess(m.Base):
     subject: Mapped[str] = mapped_column(String(200), default="SchoolCare notice")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    delivery_status: Mapped[str] = mapped_column(String(40), default="pending")  # pending|emailed|manual|failed
+    delivery_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    delivery_notes: Mapped[str] = mapped_column(Text, default="")
+    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ParentAck(m.Base):
@@ -628,6 +633,28 @@ def render_template(template_id: int, learner_id: int, s: Session = Depends(m.db
 
 
 # --- Parent portal ----------------------------------------------------------
+def _deliver_parent_invite(item: ParentAccess, learner: m.Learner, token: str, subject: str) -> tuple[bool, str]:
+    """Attempt SMTP delivery; returns (emailed, notes). Updates delivery counters on item."""
+    link = mailer.public_url(f"/#parent={token}")
+    item.delivery_attempts = int(item.delivery_attempts or 0) + 1
+    item.last_delivery_at = datetime.now(timezone.utc)
+    if mailer.smtp_ready():
+        try:
+            mailer.send_email(item.email, subject,
+                              f"You have been invited to acknowledge a SchoolCare notice for {learner.first_name}.\n\n"
+                              f"Open this private link (expires in 7 days):\n{link}\n")
+            item.delivery_status = "emailed"
+            item.delivery_notes = "Invitation emailed via SMTP"
+            return True, item.delivery_notes
+        except Exception as exc:
+            item.delivery_status = "failed"
+            item.delivery_notes = f"SMTP delivery failed: {exc}"
+            return False, item.delivery_notes
+    item.delivery_status = "manual"
+    item.delivery_notes = "SMTP not configured; share private link/token with the guardian only"
+    return False, item.delivery_notes
+
+
 @router.post("/parent-portal/invite", status_code=201)
 def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
                   ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
@@ -638,25 +665,52 @@ def parent_invite(data: ParentInviteIn, s: Session = Depends(m.db),
     token = secrets.token_urlsafe(32)
     item = ParentAccess(school_id=ctx["sid"], learner_id=data.learner_id, email=data.email.lower(),
                         subject=subject, token_hash=hashlib.sha256(token.encode()).hexdigest(),
-                        expires_at=datetime.now(timezone.utc) + timedelta(days=7))
+                        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                        created_at=datetime.now(timezone.utc), delivery_status="pending",
+                        delivery_attempts=0, delivery_notes="")
     s.add(item); s.flush()
-    link = mailer.public_url(f"/#parent={token}")
-    emailed = False
-    if mailer.smtp_ready():
-        try:
-            mailer.send_email(data.email.lower(), subject,
-                              f"You have been invited to acknowledge a SchoolCare notice for {learner.first_name}.\n\n"
-                              f"Open this private link (expires in 7 days):\n{link}\n")
-            emailed = True
-        except Exception:
-            raise HTTPException(503, "Parent invite email delivery failed")
+    emailed, notes = _deliver_parent_invite(item, learner, token, subject)
+    if item.delivery_status == "failed":
+        m.log(s, ctx, "invite_failed", "parent_access", item.id); s.commit()
+        raise HTTPException(503, "Parent invite email delivery failed")
     m.log(s, ctx, "invite", "parent_access", item.id); s.commit()
-    out = {"id": item.id, "emailed": emailed, "expires_in_hours": 168, "subject": subject}
+    out = {"id": item.id, "emailed": emailed, "expires_in_hours": 168, "subject": subject,
+           "delivery_status": item.delivery_status, "delivery_attempts": item.delivery_attempts,
+           "delivery_notes": notes}
     if not emailed:
         out["token"] = token
-        out["notice"] = "SMTP not configured; share this private link/token with the guardian only."
+        out["notice"] = notes
     else:
         out["notice"] = "Parent invitation emailed."
+    return out
+
+
+@router.post("/parent-portal/notices/{notice_id}/resend")
+def parent_notice_resend(notice_id: int, s: Session = Depends(m.db),
+                         ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    item = s.scalar(select(ParentAccess).where(ParentAccess.id == notice_id, ParentAccess.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Notice not found")
+    if item.used:
+        raise HTTPException(409, "Notice already acknowledged")
+    exp = item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at
+    if exp <= datetime.now(timezone.utc):
+        raise HTTPException(409, "Notice expired — issue a new invite")
+    learner = s.get(m.Learner, item.learner_id)
+    if not learner:
+        raise HTTPException(404, "Learner not found")
+    # Issue a fresh token for resend so prior leaked tokens are superseded
+    token = secrets.token_urlsafe(32)
+    item.token_hash = hashlib.sha256(token.encode()).hexdigest()
+    emailed, notes = _deliver_parent_invite(item, learner, token, item.subject)
+    if item.delivery_status == "failed":
+        m.log(s, ctx, "resend_failed", "parent_access", item.id); s.commit()
+        raise HTTPException(503, "Parent notice resend failed")
+    m.log(s, ctx, "resend", "parent_access", item.id); s.commit()
+    out = {"id": item.id, "emailed": emailed, "delivery_status": item.delivery_status,
+           "delivery_attempts": item.delivery_attempts, "delivery_notes": notes, "notice": notes}
+    if not emailed:
+        out["token"] = token
     return out
 
 
@@ -720,11 +774,17 @@ def list_parent_notices(s: Session = Depends(m.db), ctx=Depends(m.require("schoo
             status = "expired"
         else:
             status = "pending"
+        created = getattr(x, "created_at", None) or (x.expires_at - timedelta(days=7))
+        delivery = getattr(x, "delivery_status", None) or ("email" if mailer.smtp_ready() else "manual")
         out.append({
             "id": x.id, "learner_id": x.learner_id, "email": x.email, "subject": x.subject,
-            "status": status, "delivery": "email" if mailer.smtp_ready() else "manual_token",
+            "status": status, "delivery": delivery,
+            "delivery_attempts": int(getattr(x, "delivery_attempts", 0) or 0),
+            "delivery_notes": getattr(x, "delivery_notes", "") or "",
+            "last_delivery_at": x.last_delivery_at.isoformat() if getattr(x, "last_delivery_at", None) else None,
             "expires_at": x.expires_at.isoformat(),
-            "created_at": (x.expires_at - timedelta(days=7)).isoformat(),
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
+            "can_resend": status == "pending",
         })
     return out
 
