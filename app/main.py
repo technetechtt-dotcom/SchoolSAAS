@@ -7,7 +7,7 @@ from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, Cookie
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, Date, UniqueConstraint, select, func, text
+from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, Date, UniqueConstraint, select, func, text, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,15 @@ if not JWT_SECRET:
     raise RuntimeError('Set JWT_SECRET using .env; never use an embedded default')
 engine = create_engine(DATABASE_URL, connect_args={'check_same_thread': False} if DATABASE_URL.startswith('sqlite') else {})
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
+@event.listens_for(Session, "after_begin")
+def _apply_tenant_context_after_begin(session, transaction, connection):
+    # Commits may open a new transaction within the same request. Reapply
+    # SET LOCAL each time so row-level security cannot lose the tenant context.
+    school_id=session.info.get("school_id")
+    if school_id is not None and connection.dialect.name=="postgresql":
+        connection.execute(text("SELECT set_config('app.school_id', :sid, true)"),
+                           {"sid":str(school_id)})
+
 ph = PasswordHasher()
 app = FastAPI(title='SchoolCare SaaS — Multi-school discipline platform', version='0.1.0')
 
@@ -293,9 +302,8 @@ def current(request: Request, session: Session=Depends(db)):
     school = session.get(School, sid)
     user=session.get(User,uid)
     if not membership or not membership.active or not user or not user.active or not school or school.status!='active': raise HTTPException(403, 'School access denied')
+    session.info["school_id"]=sid
     if session.bind.dialect.name == "postgresql":
-        # SET LOCAL is transaction-scoped and prevents pooled connections from
-        # leaking the previous request's tenant security context.
         session.execute(text("SELECT set_config('app.school_id', :school_id, true)"),
                         {"school_id":str(sid)})
     assigned=[membership.assigned_class] if membership.assigned_class else []
