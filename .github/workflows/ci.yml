@@ -65,6 +65,7 @@ jobs:
               raise RuntimeError("Test web server failed to start")
           PY
           python tests/browser_smoke.py
+          python tests/browser_roles.py
 
   postgres-rls:
     runs-on: ubuntu-latest
