@@ -7,7 +7,7 @@ from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Depends, Response, Request, Cookie
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, Date, UniqueConstraint, select, func
+from sqlalchemy import create_engine, String, ForeignKey, DateTime, Integer, Boolean, Text, Date, UniqueConstraint, select, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 from pydantic import BaseModel, Field
 
@@ -293,6 +293,11 @@ def current(request: Request, session: Session=Depends(db)):
     school = session.get(School, sid)
     user=session.get(User,uid)
     if not membership or not membership.active or not user or not user.active or not school or school.status!='active': raise HTTPException(403, 'School access denied')
+    if session.bind.dialect.name == "postgresql":
+        # SET LOCAL is transaction-scoped and prevents pooled connections from
+        # leaking the previous request's tenant security context.
+        session.execute(text("SELECT set_config('app.school_id', :school_id, true)"),
+                        {"school_id":str(sid)})
     assigned=[membership.assigned_class] if membership.assigned_class else []
     from app.operations import ClassAssignment
     assigned+=list(session.scalars(select(ClassAssignment.class_name).where(
