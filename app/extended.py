@@ -45,6 +45,9 @@ class SchoolDocument(m.Base):
     title:Mapped[str]=mapped_column(String(180))
     body:Mapped[str]=mapped_column(Text)
     document_type:Mapped[str]=mapped_column(String(40),default="letter")
+    status:Mapped[str]=mapped_column(String(30),default="draft")  # draft|approved|archived
+    approved_by:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    approved_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
 
 class AppealIn(BaseModel):
@@ -223,18 +226,44 @@ def update_appointment(appointment_id:int,data:AppointmentUpdate,s:Session=Depen
 @router.get("/documents")
 def documents(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     rows=s.scalars(select(SchoolDocument).where(SchoolDocument.school_id==ctx["sid"]).order_by(SchoolDocument.id.desc()).limit(200)).all()
-    return [{"id":x.id,"learner_id":x.learner_id,"title":x.title,"document_type":x.document_type,"created_at":x.created_at.isoformat()} for x in rows]
+    return [{"id":x.id,"learner_id":x.learner_id,"title":x.title,"document_type":x.document_type,
+             "status":getattr(x,"status",None) or "draft",
+             "approved_at":x.approved_at.isoformat() if getattr(x,"approved_at",None) else None,
+             "created_at":x.created_at.isoformat()} for x in rows]
 
 @router.get("/documents/{document_id}")
 def get_document(document_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     x=school_record(s,SchoolDocument,document_id,ctx["sid"])
-    return {"id":x.id,"learner_id":x.learner_id,"title":x.title,"body":x.body,"document_type":x.document_type}
+    return {"id":x.id,"learner_id":x.learner_id,"title":x.title,"body":x.body,"document_type":x.document_type,
+            "status":getattr(x,"status",None) or "draft",
+            "approved_by":getattr(x,"approved_by",None),
+            "approved_at":x.approved_at.isoformat() if getattr(x,"approved_at",None) else None}
 
 @router.post("/documents",status_code=201)
 def add_document(data:DocIn,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
     school_record(s,m.Learner,data.learner_id,ctx["sid"])
-    x=SchoolDocument(school_id=ctx["sid"],**data.model_dump());s.add(x);s.flush()
-    m.log(s,ctx,"create","document",x.id);s.commit();return {"id":x.id}
+    x=SchoolDocument(school_id=ctx["sid"],status="draft",**data.model_dump());s.add(x);s.flush()
+    m.log(s,ctx,"create","document",x.id);s.commit();return {"id":x.id,"status":x.status}
+
+@router.post("/documents/{document_id}/approve")
+def approve_document(document_id:int,s:Session=Depends(m.db),ctx=Depends(m.require("school_admin","principal","smt"))):
+    x=school_record(s,SchoolDocument,document_id,ctx["sid"])
+    if (getattr(x,"status",None) or "draft") not in ("draft",):
+        raise HTTPException(409,"Only draft documents can be approved")
+    x.status="approved"
+    x.approved_by=ctx["uid"]
+    x.approved_at=datetime.now(timezone.utc)
+    m.log(s,ctx,"approve","document",x.id);s.commit()
+    return {"id":x.id,"status":x.status}
+
+@router.post("/documents/{document_id}/archive")
+def archive_document(document_id:int,s:Session=Depends(m.db),ctx=Depends(m.require("school_admin","principal","smt"))):
+    x=school_record(s,SchoolDocument,document_id,ctx["sid"])
+    if (getattr(x,"status",None) or "draft")=="archived":
+        raise HTTPException(409,"Document already archived")
+    x.status="archived"
+    m.log(s,ctx,"archive","document",x.id);s.commit()
+    return {"id":x.id,"status":x.status}
 
 @router.get("/subscription")
 def subscription(ctx=Depends(m.require(*ADMIN)),s:Session=Depends(m.db)):
@@ -292,7 +321,7 @@ def switch_school(data:SchoolSwitch,response:Response,request:Request,s:Session=
         m.Membership.user_id==ctx["uid"],m.Membership.active==True))
     school=s.get(m.School,data.school_id)
     if not membership or not school or school.status!="active":raise HTTPException(403,"School access denied")
-    new_token=m.issue_token(ctx["uid"],school.id,s)
+    new_token=m.issue_token(ctx["uid"],school.id,s,request)
     s.commit()
     m.revoke_token(request.cookies.get("session"),s)
     response.set_cookie("session",new_token,httponly=True,

@@ -139,6 +139,11 @@ class ActiveSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
     school_id: Mapped[int] = mapped_column(ForeignKey('schools.id'), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True,
+                                                       default=lambda: datetime.now(timezone.utc))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_agent: Mapped[str] = mapped_column(String(240), default='')
+    label: Mapped[str] = mapped_column(String(120), default='')
 
 class LoginFailure(Base):
     __tablename__ = 'login_failures'
@@ -156,6 +161,12 @@ class StaffInvite(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(Boolean, default=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True,
+                                                       default=lambda: datetime.now(timezone.utc))
+    delivery_status: Mapped[str] = mapped_column(String(40), default='pending')
+    delivery_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class ParentContact(Base):
     __tablename__ = 'parent_contacts'
@@ -235,6 +246,24 @@ def _ensure_sqlite_columns():
             ('delivery_notes', "TEXT DEFAULT ''"),
             ('last_delivery_at', 'DATETIME'),
         ],
+        'active_sessions': [
+            ('created_at', 'DATETIME'),
+            ('last_seen_at', 'DATETIME'),
+            ('user_agent', "VARCHAR(240) DEFAULT ''"),
+            ('label', "VARCHAR(120) DEFAULT ''"),
+        ],
+        'staff_invites': [
+            ('revoked', 'BOOLEAN DEFAULT 0'),
+            ('created_at', 'DATETIME'),
+            ('delivery_status', "VARCHAR(40) DEFAULT 'pending'"),
+            ('delivery_attempts', 'INTEGER DEFAULT 0'),
+            ('last_delivery_at', 'DATETIME'),
+        ],
+        'school_documents': [
+            ('status', "VARCHAR(30) DEFAULT 'draft'"),
+            ('approved_by', 'INTEGER'),
+            ('approved_at', 'DATETIME'),
+        ],
     }
     with engine.begin() as conn:
         for table, cols in planned.items():
@@ -273,12 +302,20 @@ def startup():
 def db():
     with SessionLocal() as s: yield s
 
-def issue_token(uid: int, school_id: int, session: Session):
+def issue_token(uid: int, school_id: int, session: Session, request: Request | None = None):
     """Issue a revocable token; only a SHA-256 digest is stored server-side."""
     nonce = secrets.token_urlsafe(32)
     expiry = datetime.now(timezone.utc) + timedelta(hours=8)
-    session.add(ActiveSession(token_hash=hashlib.sha256(nonce.encode()).hexdigest(),
-                              user_id=uid, school_id=school_id, expires_at=expiry))
+    row = ActiveSession(token_hash=hashlib.sha256(nonce.encode()).hexdigest(),
+                        user_id=uid, school_id=school_id, expires_at=expiry,
+                        created_at=datetime.now(timezone.utc),
+                        last_seen_at=datetime.now(timezone.utc))
+    try:
+        from app.session_security import enrich_session_on_issue
+        enrich_session_on_issue(row, request)
+    except Exception:
+        pass
+    session.add(row)
     return jwt.encode({'sub':str(uid), 'school_id':school_id,'jti':nonce,'exp':expiry},
                       JWT_SECRET, algorithm='HS256')
 
@@ -324,6 +361,11 @@ def current(request: Request, session: Session=Depends(db)):
     school = session.get(School, sid)
     user=session.get(User,uid)
     if not membership or not membership.active or not user or not user.active or not school or school.status!='active': raise HTTPException(403, 'School access denied')
+    try:
+        from app.session_security import touch_session
+        touch_session(record)
+    except Exception:
+        pass
     session.info["school_id"]=sid
     if session.bind.dialect.name == "postgresql":
         session.execute(text("SELECT set_config('app.school_id', :school_id, true)"),
@@ -444,16 +486,16 @@ def evaluate_repeat_flag(s:Session, school_id:int, learner_id:int, offence:Offen
     return False,'',similar_count,total_count
 
 @app.post('/api/register',status_code=201)
-def register(data:Register, response:Response, s:Session=Depends(db)):
+def register(data:Register, response:Response, request:Request, s:Session=Depends(db)):
     if s.scalar(select(School).where(School.slug==data.slug)): raise HTTPException(409,'School slug already used')
     if s.scalar(select(User).where(User.email==data.email.lower())): raise HTTPException(409,'Email already registered; contact support to join another school')
     school=School(name=data.school_name,slug=data.slug); user=User(email=data.email.lower(),password_hash=ph.hash(data.password))
     s.add_all([school,user]); s.flush(); s.add(Membership(school_id=school.id,user_id=user.id,role='school_admin'))
-    s.commit(); token=issue_token(user.id,school.id,s);s.commit()
+    s.commit(); token=issue_token(user.id,school.id,s,request);s.commit()
     response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school_id':school.id,'school':school.name,'role':'school_admin'}
 @app.post('/api/login')
-def login(data:Login,response:Response,s:Session=Depends(db)):
+def login(data:Login,response:Response,request:Request,s:Session=Depends(db)):
     slug = (data.school_slug or '').strip().lower()
     email = (data.email or '').strip().lower()
     identity = login_identity(slug, email)
@@ -477,7 +519,7 @@ def login(data:Login,response:Response,s:Session=Depends(db)):
         from app.pilot_pack import issue_mfa_pending
         return {'mfa_required': True, 'mfa_token': issue_mfa_pending(user.id, school.id),
                 'school': school.name, 'role': mem.role}
-    token=issue_token(user.id,school.id,s)
+    token=issue_token(user.id,school.id,s,request)
     s.commit()
     response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school':school.name,'role':mem.role,'mfa_required':False}
@@ -674,33 +716,31 @@ def invite(data:InviteRequest,s:Session=Depends(db),ctx=Depends(require('school_
     token=secrets.token_urlsafe(32)
     i=StaffInvite(school_id=ctx['sid'],email=data.email.lower(),role=data.role,
         assigned_class=data.assigned_class,token_hash=hashlib.sha256(token.encode()).hexdigest(),
-        expires_at=datetime.now(timezone.utc)+timedelta(days=3))
+        expires_at=datetime.now(timezone.utc)+timedelta(days=3),
+        created_at=datetime.now(timezone.utc), revoked=False,
+        delivery_status='pending', delivery_attempts=0)
     s.add(i);s.flush();log(s,ctx,'invite','staff_invite',i.id)
-    emailed=False
-    try:
-        from app import mailer
-        if mailer.smtp_ready():
-            mailer.send_email(data.email.lower(),'SchoolCare staff invitation',
-                f"You have been invited to join {ctx['school']} as {data.role}.\n\n"
-                f"Accept in the app with this invitation token (expires in 72 hours):\n{token}\n\n"
-                f"Open: {mailer.public_url()}\n")
-            emailed=True
-    except Exception:
+    from app.session_security import _deliver_staff_invite
+    emailed, notes = _deliver_staff_invite(i, token, ctx['school'])
+    if i.delivery_status == 'failed':
+        s.commit()
         raise HTTPException(503,'Invitation email delivery failed')
     s.commit()
-    out={'expires_in_hours':72,'emailed':emailed}
+    out={'id':i.id,'expires_in_hours':72,'emailed':emailed,'delivery_status':i.delivery_status,
+         'delivery_attempts':i.delivery_attempts}
     if emailed:
         out['notice']='Invitation emailed to the staff member.'
     else:
         out['token']=token
-        out['notice']='SMTP not configured; share this token with the intended staff member privately.'
+        out['notice']=notes
     return out
 
 @app.post('/api/invitations/accept',status_code=201)
 def accept_invite(data:InviteAccept,s:Session=Depends(db)):
     digest=hashlib.sha256(data.token.encode()).hexdigest()
     inv=s.scalar(select(StaffInvite).where(StaffInvite.token_hash==digest))
-    if not inv or inv.used or inv.expires_at.replace(tzinfo=timezone.utc)<datetime.now(timezone.utc):
+    if (not inv or inv.used or bool(getattr(inv,'revoked',False))
+            or inv.expires_at.replace(tzinfo=timezone.utc)<datetime.now(timezone.utc)):
         raise HTTPException(400,'Invalid or expired invitation')
     school=s.get(School,inv.school_id)
     if not school or school.status!='active':raise HTTPException(403,'School inactive')
@@ -884,6 +924,8 @@ from app.onboarding import router as onboarding_router
 app.include_router(onboarding_router)
 from app.letter_workflow import router as letter_workflow_router
 app.include_router(letter_workflow_router)
+from app.session_security import router as session_security_router
+app.include_router(session_security_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 

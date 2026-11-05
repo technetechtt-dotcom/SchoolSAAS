@@ -274,7 +274,20 @@ async function guardianPage(){
  btn("Open learners","go-learners"));
 }
 
+async function staffPage(){
+ const [members,invites]=await Promise.all([api("members"),api("invitations")]);
+ $("page").innerHTML=head("Staff & access","Invite staff, manage roles and revoke pending invitations",btn("Invite staff","invite","",false))+
+ panel(table(["Email","Role","Class","Status"],(members||[]).map(x=>[
+  plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id)
+ ])),"Active memberships")+
+ panel(table(["Email","Role","Status","Delivery","Attempts","Expires","Action"],(invites||[]).map(x=>[
+  plain(x.email),plain(x.role),pill(x.status),pill(x.delivery_status||"—"),plain(x.delivery_attempts||0),
+  plain((x.expires_at||"").slice(0,10)),
+  (x.can_resend?btn("Resend","resend-invite",x.id):"")+(x.can_revoke?btn("Revoke","revoke-invite",x.id):x.can_resend||x.can_revoke?"":plain("—"))
+ ])),"Pending & historical invitations");
+}
 async function listPage(key){
+ if(key==="staff"){await staffPage();return}
  const config={
  learners:["Learners","Manage learner records and access learner history","learners",["name","admission_no","grade","class_name"],["Learner","Admission","Grade","Class"]],
  incidents:["Incidents","Review, classify and follow up reported events","incidents",["description","location","status","id"],["Incident","Location","Status","Reported"]],
@@ -286,7 +299,7 @@ async function listPage(key){
  tasks:["Review tasks","Action urgent and repeated behaviour referrals","review-tasks",["reason","status"],["Incident","Reason","Due","Status"]],
  appeals:["Appeals & reviews","Track challenges, review and outcomes","appeals",["reason","status"],["Case","Hearing","Reason","Status"]],
  appointments:["Meetings","Schedule and record guardian meetings","appointments",["title","status"],["Learner","Meeting","Date","Status"]],
- documents:["Document drafts","Store school-approved correspondence drafts","documents",["title","document_type"],["Learner","Title","Type","Date"]],
+ documents:["Document drafts","Draft → approve → archive school correspondence","documents",["title","document_type","status"],["Learner","Title","Type","Status","Actions"]],
  classes:["Grades & classes","Current class allocation derived from learner records","classes",["grade","class_name"],["Grade","Class","Learners"]],
  audit:["Audit log","School-scoped administrative activity","audit",["action","subject"],["Action","Record","Time"]]
  };
@@ -308,7 +321,8 @@ async function listPage(key){
  case "tasks":return [link("#"+x.incident_id,"incidents",x.incident_id),plain(x.reason),plain(x.due_at.slice(0,10)),btn(x.status,"edit-task",x.id)];
  case "appeals":return [link("#"+x.case_id,"cases",x.case_id),plain(x.hearing_id?"Hearing #"+x.hearing_id:"—"),plain(x.reason.slice(0,85)),btn(x.status,"edit-appeal",x.id)];
  case "appointments":return [link("#"+x.learner_id,"learners",x.learner_id),plain(x.title),plain(x.scheduled_at.slice(0,16)),btn(x.status,"edit-appointment",x.id)];
- case "documents":return [link("#"+x.learner_id,"learners",x.learner_id),btn(x.title,"view-document",x.id),plain(x.document_type),plain(x.created_at.slice(0,10))];
+ case "documents":return [link("#"+x.learner_id,"learners",x.learner_id),btn(x.title,"view-document",x.id),plain(x.document_type),pill(x.status||"draft"),
+  (x.status==="draft"?btn("Approve","approve-document",x.id):"")+(x.status!=="archived"?btn("Archive","archive-document",x.id):"")];
  case "classes":return ['<button type="button" class="linkbtn" data-open-grade="'+esc(x.grade)+'">Grade '+esc(x.grade)+'</button>',plain(x.class_name),plain(x.learners)];
  case "audit":return [plain(x.action),plain(x.subject+" #"+x.subject_id),plain(x.at.slice(0,19))];
  }});return table(c[4],rows)}
@@ -501,9 +515,17 @@ async function parentAcksPage(){
 }
 async function securityPage(){
  try{user=await api("me")}catch(_){}
- $("page").innerHTML=head("Security & MFA","Protect staff sign-in with authenticator apps")+
+ let sessions={items:[],notice:""};
+ try{sessions=await api("sessions")}catch(e){sessions={items:[],notice:e.message}}
+ $("page").innerHTML=head("Security & MFA","Authenticator protection and active session control")+
  panel('<p class="subtle">MFA status: <strong>'+(user.mfa_enabled?"enabled":"disabled")+'</strong></p>'+
-  btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"));
+  btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"),"Multi-factor authentication")+
+ panel('<p class="subtle">'+esc(sessions.notice||"Sessions expire after 8 hours.")+'</p>'+
+  table(["Device","Current","Created","Last seen","Expires","Action"],(sessions.items||[]).map(x=>[
+   plain(x.label||"Session"),pill(x.current?"this device":"other"),
+   plain((x.created_at||"").slice(0,19)),plain((x.last_seen_at||"").slice(0,19)),plain((x.expires_at||"").slice(0,19)),
+   x.current?plain("—"):btn("Revoke","revoke-session",x.id)
+  ]))+btn("Revoke other sessions","revoke-other-sessions","",false),"Active sessions");
 }
 async function privacyPage(){
  const [status,ret,requests]=await Promise.all([api("privacy/status"),api("privacy/retention"),api("privacy/requests")]);
@@ -659,7 +681,17 @@ async function openAction(action,id){
  case "edit-appointment":data=(await api("appointments")).find(x=>String(x.id)===String(id));name="Update meeting";kind="appointment-update:"+id;body=options("status","Status",["scheduled","completed","cancelled"].map(x=>[x,x]),data.status);break;
  case "create-document":name="Create document draft";kind="documents";body=await learnerPicker()+input("title","Document title","text","","required")+options("document_type","Document type",["letter","meeting_request","outcome","other"].map(x=>[x,x]))+area("body","Draft text (staff approval required)");break;
  case "accept-invitation":name="Accept staff invitation";kind="invitations/accept";body=input("token","Invitation token","text","","required")+input("password","Account password (12+ characters)","password","","minlength=\"12\" required");break;
- case "view-document":data=await api("documents/"+id);modal(data.title,panel('<p style="white-space:pre-wrap">'+esc(data.body)+'</p><p class="subtle">Draft only. No letter has been sent.</p>'));return;
+ case "view-document":data=await api("documents/"+id);modal(data.title,panel('<p class="subtle">Status: '+esc(data.status||"draft")+'</p><p style="white-space:pre-wrap">'+esc(data.body)+'</p><p class="subtle">Approval records school review; delivery still uses Letters or Parent notices.</p>'));return;
+ case "approve-document":await api("documents/"+id+"/approve","POST",{});toast("Document approved");navigate("documents");return;
+ case "archive-document":if(!confirm("Archive this document?"))return;await api("documents/"+id+"/archive","POST",{});toast("Document archived");navigate("documents");return;
+ case "resend-invite":{
+  const r=await api("invitations/"+id+"/resend","POST",{});
+  if(r.emailed){toast(r.notice||"Invitation resent");navigate("staff");return}
+  if(r.token){modal("Share resent invitation",panel('<p class="subtle">'+esc(r.notice||"Share privately.")+'</p><textarea readonly aria-label="Invitation token">'+esc(r.token)+'</textarea><div class="form-actions"><button type="button" class="secondary" data-action="close">Done</button></div>'));return}
+  toast(r.notice||"Resend recorded");navigate("staff");return;}
+ case "revoke-invite":if(!confirm("Revoke this pending invitation?"))return;await api("invitations/"+id+"/revoke","POST",{});toast("Invitation revoked");navigate("staff");return;
+ case "revoke-session":await api("sessions/"+id+"/revoke","POST",{});toast("Session revoked");navigate("security");return;
+ case "revoke-other-sessions":{const r=await api("sessions/revoke-others","POST",{});toast("Revoked "+(r.revoked||0)+" other session(s)");navigate("security");return;}
  case "create-conduct":name="New Code of Conduct version";kind="conduct-versions";body=input("version_label","Version label","text","","required")+input("title","Title","text","","required")+input("effective_from","Effective from","datetime-local","","required")+area("body","Full text");break;
  case "approve-conduct":await api("conduct-versions/"+id+"/approve","PATCH",{});toast("Conduct version approved");navigate("conduct");return;
  case "view-conduct":data=await api("conduct-versions/"+id);modal(data.title,panel('<p class="subtle">'+esc(data.version_label)+" · "+esc(data.effective_from)+' · '+(data.approved?"approved":"draft")+'</p><pre style="white-space:pre-wrap">'+esc(data.body)+'</pre>'));return;

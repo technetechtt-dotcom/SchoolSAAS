@@ -157,7 +157,7 @@ def test_upgrade_head_on_populated_historical_schema(tmp_path):
 
     with create_engine(url).connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0007_onboarding_letters"
+        assert version == "0008_sessions_invites_docs"
         assert conn.execute(text("SELECT COUNT(*) FROM learners")).scalar_one() == 1
         assert conn.execute(text("SELECT first_name FROM learners WHERE id=7")).scalar_one() == "Ada"
         assert conn.execute(text("SELECT COUNT(*) FROM incidents")).scalar_one() == 1
@@ -172,6 +172,12 @@ def test_upgrade_head_on_populated_historical_schema(tmp_path):
         assert "letter_documents" in tables
         parent_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(parent_access_tokens)")).all()}
         assert {"delivery_status", "delivery_attempts", "delivery_notes"} <= parent_cols
+        session_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(active_sessions)")).all()}
+        assert {"created_at", "last_seen_at", "user_agent", "label"} <= session_cols
+        invite_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(staff_invites)")).all()}
+        assert {"revoked", "delivery_status", "delivery_attempts"} <= invite_cols
+        doc_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(school_documents)")).all()}
+        assert {"status", "approved_by", "approved_at"} <= doc_cols
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(invoices)")).all()}
         assert {"gateway", "payment_ref", "paid_at"} <= cols
         learner_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(learners)")).all()}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import hashlib, os, secrets
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Response, Header
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Response, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Integer, UniqueConstraint, select, func
 from sqlalchemy.orm import Session, Mapped, mapped_column
@@ -354,7 +354,7 @@ def mfa_disable(data: MfaConfirm, s: Session = Depends(m.db), ctx=Depends(m.curr
 
 
 @router.post("/mfa/verify-login")
-def mfa_verify_login(data: MfaLogin, response: Response, s: Session = Depends(m.db)):
+def mfa_verify_login(data: MfaLogin, response: Response, request: Request, s: Session = Depends(m.db)):
     _require_pyotp()
     uid, sid = decode_mfa_pending(data.mfa_token)
     user = s.get(m.User, uid)
@@ -366,7 +366,7 @@ def mfa_verify_login(data: MfaLogin, response: Response, s: Session = Depends(m.
     school = s.get(m.School, sid)
     if not mem or not mem.active or not school:
         raise HTTPException(403, "School access denied")
-    token = m.issue_token(uid, sid, s)
+    token = m.issue_token(uid, sid, s, request)
     s.commit()
     response.set_cookie("session", token, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false") == "true",
