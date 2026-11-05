@@ -94,5 +94,9 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Migrate new PostgreSQL schema
         run: python -m alembic upgrade head
+      - name: Prepare RLS and non-superuser application role
+        run: python scripts/prepare_postgres_rls_ci.py
       - name: Validate row-level tenant security
+        env:
+          DATABASE_URL: postgresql+psycopg://schoolcare_ci_app:ci-app-only-password@localhost:5432/schoolcare
         run: python -m pytest -q tests/test_postgres_rls.py
