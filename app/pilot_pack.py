@@ -506,16 +506,19 @@ def create_invoice(data: InvoiceIn, s: Session = Depends(m.db), ctx=Depends(m.re
 
 
 @router.post("/billing/invoices/{invoice_id}/mark-paid")
-def mark_paid(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.require("school_admin"))):
+def mark_paid(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.current)):
+    # School administrators cannot grant themselves paid subscription status.
+    # Reconciliation by a separate platform operator is required.
+    platform_user(s, ctx)
     item = s.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.school_id == ctx["sid"]))
     if not item:
         raise HTTPException(404, "Invoice not found")
+    if item.status != "issued":
+        raise HTTPException(409, "Invoice already reconciled or closed")
     item.status = "paid_manual"
-    school = s.get(m.School, ctx["sid"])
-    if school:
-        school.plan = "active_manual"
-    m.log(s, ctx, "pay", "invoice", item.id); s.commit()
-    return {"id": item.id, "status": item.status}
+    # Manual invoice bookkeeping does NOT activate a subscription.
+    m.log(s, ctx, "manual_reconcile", "invoice", item.id); s.commit()
+    return {"id": item.id, "status": item.status, "subscription_activated": False}
 
 
 # --- Retention / POPIA placeholders ----------------------------------------
