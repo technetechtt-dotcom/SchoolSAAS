@@ -261,7 +261,7 @@ def _load_learner_context(s: Session, learner_id: int, ctx: dict):
 
 
 @router.get("/learners/{learner_id}/intervention-recommendations")
-def learner_recommendations(learner_id: int, s: Session = Depends(m.db), ctx=Depends(m.current)):
+def learner_recommendations(learner_id: int, s: Session = Depends(m.db), ctx=Depends(m.require(*MANAGERS))):
     if ctx["role"] not in MANAGERS and ctx["role"] != "educator":
         raise HTTPException(403, "Not authorised")
     learner, observations, incidents, offences, interventions, window_days = _load_learner_context(s, learner_id, ctx)
