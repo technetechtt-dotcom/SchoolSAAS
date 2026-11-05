@@ -335,8 +335,13 @@ def mfa_enable(data: MfaConfirm, s: Session = Depends(m.db), ctx=Depends(m.curre
     if not pyotp.TOTP(mfa_crypto.decrypt_secret(user.mfa_secret)).verify(data.code, valid_window=1):
         raise HTTPException(401, "Invalid MFA code")
     user.mfa_enabled = True
+    from app.account_security import replace_recovery_codes, record_security_event
+    codes = replace_recovery_codes(s, user.id)
+    record_security_event(s, user.id, ctx["sid"], "mfa_enabled",
+                          "Authenticator MFA enabled; recovery codes issued", email_user=True)
     s.commit()
-    return {"ok": True, "mfa_enabled": True}
+    return {"ok": True, "mfa_enabled": True, "recovery_codes": codes,
+            "notice": "Save these one-time recovery codes offline. They will not be shown again."}
 
 
 @router.post("/mfa/disable")
@@ -349,6 +354,11 @@ def mfa_disable(data: MfaConfirm, s: Session = Depends(m.db), ctx=Depends(m.curr
         raise HTTPException(401, "Invalid MFA code")
     user.mfa_enabled = False
     user.mfa_secret = None
+    from app.account_security import MfaRecoveryCode, record_security_event
+    from sqlalchemy import delete
+    s.execute(delete(MfaRecoveryCode).where(MfaRecoveryCode.user_id == user.id))
+    record_security_event(s, user.id, ctx["sid"], "mfa_disabled",
+                          "Authenticator MFA disabled", email_user=True)
     s.commit()
     return {"ok": True, "mfa_enabled": False}
 
@@ -367,6 +377,11 @@ def mfa_verify_login(data: MfaLogin, response: Response, request: Request, s: Se
     if not mem or not mem.active or not school:
         raise HTTPException(403, "School access denied")
     token = m.issue_token(uid, sid, s, request)
+    try:
+        from app.account_security import record_security_event
+        record_security_event(s, uid, sid, "login_success_mfa", "Authenticator MFA sign-in", email_user=False)
+    except Exception:
+        pass
     s.commit()
     response.set_cookie("session", token, httponly=True,
                         secure=os.getenv("COOKIE_SECURE", "false") == "true",

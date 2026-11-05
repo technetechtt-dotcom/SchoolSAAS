@@ -277,8 +277,9 @@ async function guardianPage(){
 async function staffPage(){
  const [members,invites]=await Promise.all([api("members"),api("invitations")]);
  $("page").innerHTML=head("Staff & access","Invite staff, manage roles and revoke pending invitations",btn("Invite staff","invite","",false))+
- panel(table(["Email","Role","Class","Status"],(members||[]).map(x=>[
-  plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id)
+ panel(table(["Email","Role","Class","Status","Security"],(members||[]).map(x=>[
+  plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id),
+  (admin()&&x.user_id!==user.uid?btn("Reset MFA","reset-member-mfa",x.id):plain("—"))
  ])),"Active memberships")+
  panel(table(["Email","Role","Status","Delivery","Attempts","Expires","Action"],(invites||[]).map(x=>[
   plain(x.email),plain(x.role),pill(x.status),pill(x.delivery_status||"—"),plain(x.delivery_attempts||0),
@@ -515,17 +516,23 @@ async function parentAcksPage(){
 }
 async function securityPage(){
  try{user=await api("me")}catch(_){}
- let sessions={items:[],notice:""};
+ let sessions={items:[],notice:""},recovery={recovery_codes_remaining:0},events=[];
  try{sessions=await api("sessions")}catch(e){sessions={items:[],notice:e.message}}
- $("page").innerHTML=head("Security & MFA","Authenticator protection and active session control")+
- panel('<p class="subtle">MFA status: <strong>'+(user.mfa_enabled?"enabled":"disabled")+'</strong></p>'+
-  btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable"),"Multi-factor authentication")+
+ try{recovery=await api("mfa/recovery-status")}catch(_){}
+ try{events=await api("security/events")}catch(_){events=[]}
+ $("page").innerHTML=head("Security & MFA","Authenticator protection, recovery codes and session control")+
+ panel('<p class="subtle">MFA status: <strong>'+(user.mfa_enabled?"enabled":"disabled")+'</strong> · Recovery codes remaining: <strong>'+esc(recovery.recovery_codes_remaining||0)+'</strong></p>'+
+  btn("Set up MFA","mfa-setup","",false)+" "+btn("Enable MFA","mfa-enable")+" "+btn("Disable MFA","mfa-disable")+" "+
+  (user.mfa_enabled?btn("Regenerate recovery codes","mfa-regen-codes","",false):""),"Multi-factor authentication")+
  panel('<p class="subtle">'+esc(sessions.notice||"Sessions expire after 8 hours.")+'</p>'+
   table(["Device","Current","Created","Last seen","Expires","Action"],(sessions.items||[]).map(x=>[
    plain(x.label||"Session"),pill(x.current?"this device":"other"),
    plain((x.created_at||"").slice(0,19)),plain((x.last_seen_at||"").slice(0,19)),plain((x.expires_at||"").slice(0,19)),
    x.current?plain("—"):btn("Revoke","revoke-session",x.id)
-  ]))+btn("Revoke other sessions","revoke-other-sessions","",false),"Active sessions");
+  ]))+btn("Revoke other sessions","revoke-other-sessions","",false),"Active sessions")+
+ panel(table(["When","Event","Detail","Emailed"],(events||[]).slice(0,20).map(x=>[
+  plain((x.created_at||"").slice(0,19)),plain(x.event_type),plain(x.detail||"—"),pill(x.emailed?"yes":"no")
+ ])),"Recent security events");
 }
 async function privacyPage(){
  const [status,ret,requests]=await Promise.all([api("privacy/status"),api("privacy/retention"),api("privacy/requests")]);
@@ -745,6 +752,9 @@ async function openAction(action,id){
  case "mfa-setup":data=await api("mfa/setup","POST",{});modal("MFA setup",panel('<p class="subtle">Add this secret to your authenticator app, then enable MFA.</p><p><code>'+esc(data.secret)+'</code></p><p class="subtle">'+esc(data.otpauth_uri)+'</p>'));return;
  case "mfa-enable":name="Enable MFA";kind="mfa/enable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
  case "mfa-disable":name="Disable MFA";kind="mfa/disable";body=input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "mfa-regen-codes":name="Regenerate recovery codes";kind="mfa/recovery-codes/regenerate";body=input("code","Current authenticator code","text","","required minlength=\"6\"")+'<p class="subtle">Previous unused codes will stop working immediately.</p>';break;
+ case "reset-member-mfa":name="Reset staff MFA";kind="member-mfa-reset:"+id;body=area("reason","Reason for controlled MFA reset")+'<p class="subtle">Clears authenticator enrollment, recovery codes and active sessions for this staff member.</p>';break;
+ case "mfa-recovery-login":name="Sign in with recovery code";kind="mfa/verify-recovery";body=input("mfa_token","MFA token","text",id,'readonly required')+input("recovery_code","One-time recovery code","text","","required minlength=\"8\"");break;
  case "new-data-request":name="Log privacy request";kind="privacy/requests";body=input("requester_name","Requester name","text","","required")+input("requester_contact","Contact","text","","required")+input("learner_id","Learner ID (optional)","number")+options("request_type","Request type",["access","correction","objection","deletion_review","other"].map(x=>[x,x]));break;
  case "review-data-request":name="Review privacy request";kind="privacy-review:"+id;body=options("verification_status","Identity verification",["unverified","verified","rejected"].map(x=>[x,x]))+options("status","Request status",["received","under_review","awaiting_identity","awaiting_legal_review","fulfilled","declined"].map(x=>[x,x]))+area("notes","Review notes");break;
  case "set-retention":name="Retention rule";kind="privacy/retention";body=input("record_type","Record type","text","incidents","required")+input("retain_days","Retain days","number","2555","required min=\"30\"")+input("notes","Notes","text");break;
@@ -752,12 +762,17 @@ async function openAction(action,id){
  case "mark-paid":await api("billing/invoices/"+id+"/mark-paid","POST",{});toast("Invoice marked paid (manual)");navigate("billing");return;
  case "suspend-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"suspended"});toast("School suspended");navigate("platform");return;
  case "activate-school":await api("platform/schools","PATCH",{school_id:Number(id),status:"active"});toast("School activated");navigate("platform");return;
- case "complete-mfa":name="Enter MFA code";kind="mfa/verify-login";body=input("mfa_token","MFA token","text",id,'readonly required')+input("code","Authenticator code","text","","required minlength=\"6\"");break;
+ case "complete-mfa":name="Enter MFA code";kind="mfa/verify-login";body=input("mfa_token","MFA token","text",id,'readonly required')+input("code","Authenticator code","text","","required minlength=\"6\"")+'<p class="subtle">Lost your authenticator? '+btn("Use a recovery code","mfa-recovery-login",id)+'</p>';break;
  case "parent-ack":{
   let notice={subject:"",learner_name:"",school_name:"",can_dispute:true};
+  let inbox={items:[],notice:""};
   try{notice=await api("parent-portal/notice?token="+encodeURIComponent(id))}catch(e){toast(e.message,true);return}
+  try{inbox=await api("parent-portal/inbox?token="+encodeURIComponent(id))}catch(_){}
   name="Acknowledge school notice";kind="parent-portal/acknowledge";
   body='<p class="subtle">Notice for <strong>'+esc(notice.learner_name||"learner")+'</strong>'+(notice.school_name?" at "+esc(notice.school_name):"")+'</p>'+
+   (inbox.items&&inbox.items.length?('<div class="notice"><strong>Guardian inbox</strong><p class="subtle">'+esc(inbox.notice||"")+'</p><ul>'+
+    inbox.items.slice(0,8).map(x=>'<li>'+esc(x.subject)+' · '+esc(x.status)+(x.dispute_status?" · dispute "+esc(x.dispute_status):"")+(x.is_current_token?" · current":"")+'</li>').join("")+
+    '</ul></div>'):"")+
    input("token","Access token","text",id,'readonly required')+
    input("subject","Subject (must match issued notice)","text",notice.subject||"","required readonly")+
    '<p class="subtle">Subject is fixed to the school notice that was issued. Contact the school if this is incorrect.</p>'+
@@ -822,11 +837,13 @@ async function submitForm(f){
  if(k==="parent-portal/acknowledge"){go="";}
  if(k==="parent-portal/dispute")go="";
  if(prefix==="dispute-resolve"){url="parent-portal/disputes/"+id;method="PATCH";go="parent-acks"}
- if(k==="mfa/enable"||k==="mfa/disable")go="security"
+ if(k==="mfa/enable"||k==="mfa/disable"||k==="mfa/recovery-codes/regenerate")go="security"
+ if(prefix==="member-mfa-reset"){url="members/"+id+"/mfa-reset";go="staff"}
  if(k==="privacy/requests"){if(!data.learner_id)delete data.learner_id;else data.learner_id=Number(data.learner_id);go="privacy"}
  if(prefix==="privacy-review"){url="privacy/requests/"+id;method="PATCH";go="privacy"}
  if(k==="privacy/retention"){url="privacy/retention";method="PUT";data.retain_days=Number(data.retain_days);go="privacy"}
  if(k==="billing/invoices"){data.amount_cents=Number(data.amount_cents);go="billing"}
+ if(k==="mfa/verify-recovery"){await api(k,"POST",data);user=await api("me");if(!user.authenticated)throw Error("Recovery session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';close();navigate("security");schoolSelector();toast("Signed in with recovery code — regenerate codes soon");return}
  if(k==="mfa/verify-login"){await api(k,"POST",data);user=await api("me");if(!user.authenticated)throw Error("MFA session was not created");$("login-screen").hidden=true;$("app-shell").hidden=false;$("global-search").hidden=false;$("account").innerHTML='<small>'+esc(user.school)+" · "+esc(user.role)+'</small><button id="logout" class="secondary">Sign out</button>';close();navigate("dashboard");schoolSelector();toast("Signed in with MFA");return}
  if(k==="upload-evidence"){
    const file=f.querySelector('[name="file"]').files[0];if(!file){toast("Choose a file",true);return}
@@ -885,7 +902,15 @@ async function submitForm(f){
  }
  if(k==="parent-portal/acknowledge"){history.replaceState(null,"",location.pathname);toast("Notice acknowledged. Thank you.");modal("Acknowledged",panel('<p>Your acknowledgement was recorded.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close</button></div>'));return}
  if(k==="parent-portal/dispute"){history.replaceState(null,"",location.pathname);toast("Dispute submitted to the school");modal("Dispute submitted",panel('<p>The school will review your dispute. Keep your reference for follow-up.</p><div class="form-actions"><button type="button" class="secondary" data-action="close">Close</button></div>'));return}
- if(k==="mfa/enable"||k==="mfa/disable"){user=await api("me");toast(k==="mfa/enable"?"MFA enabled":"MFA disabled");navigate("security");return}
+ if(k==="mfa/enable"){user=await api("me");
+  const codes=(result.recovery_codes||[]);
+  if(codes.length){modal("Save MFA recovery codes",panel('<p class="subtle">'+esc(result.notice||"Store these offline. Each code works once.")+'</p><pre style="white-space:pre-wrap">'+esc(codes.join("\n"))+'</pre><div class="form-actions"><button type="button" class="secondary" data-action="close">I have saved these codes</button></div>'));navigate("security");return}
+  toast("MFA enabled");navigate("security");return}
+ if(k==="mfa/disable"){user=await api("me");toast("MFA disabled");navigate("security");return}
+ if(k==="mfa/recovery-codes/regenerate"){
+  const codes=(result.codes||[]);
+  modal("New MFA recovery codes",panel('<p class="subtle">'+esc(result.notice||"Save these now.")+'</p><pre style="white-space:pre-wrap">'+esc(codes.join("\n"))+'</pre><div class="form-actions"><button type="button" class="secondary" data-action="close">Done</button></div>'));navigate("security");return}
+ if(prefix==="member-mfa-reset"){toast(result.notice||"Staff MFA reset");navigate("staff");return}
  if(k==="learners"&&result.admission_no){toast("Learner saved · admission "+result.admission_no);unsaved=false;navigate(go);return}
  toast(k==="import-learners"?"Imported "+result.created+" learners; skipped "+result.skipped.length+" duplicates":"Saved successfully");unsaved=false;navigate(go);
  }catch(e){toast(e.message,true)}

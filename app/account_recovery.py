@@ -61,5 +61,11 @@ def complete_reset(data:CompleteReset,s:Session=Depends(m.db)):
     item.used=True
     s.execute(delete(m.ActiveSession).where(m.ActiveSession.user_id==user.id))
     s.execute(delete(PasswordReset).where(PasswordReset.user_id==user.id,PasswordReset.id!=item.id))
+    try:
+        from app.account_security import record_security_event
+        record_security_event(s,user.id,None,"password_reset_completed",
+                              "Password changed via recovery link",email_user=True)
+    except Exception:
+        pass
     s.commit()
     return {"ok":True,"message":"Password changed. Sign in again."}

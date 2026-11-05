@@ -113,6 +113,12 @@ def revoke_session(session_id: int, request: Request, s: Session = Depends(m.db)
     if jti and row.token_hash == hashlib.sha256(jti.encode()).hexdigest():
         raise HTTPException(400, "Use Sign out to end the current session")
     s.delete(row)
+    try:
+        from app.account_security import record_security_event
+        record_security_event(s, ctx["uid"], ctx["sid"], "session_revoked",
+                              f"Session {session_id} revoked", email_user=True)
+    except Exception:
+        pass
     m.log(s, ctx, "revoke", "active_session", session_id)
     s.commit()
     return {"ok": True}
@@ -130,6 +136,12 @@ def revoke_other_sessions(request: Request, s: Session = Depends(m.db), ctx=Depe
             continue
         s.delete(row)
         removed += 1
+    try:
+        from app.account_security import record_security_event
+        record_security_event(s, ctx["uid"], ctx["sid"], "sessions_revoked_others",
+                              f"Revoked {removed} other session(s)", email_user=removed > 0)
+    except Exception:
+        pass
     m.log(s, ctx, "revoke_others", "active_session", ctx["uid"])
     s.commit()
     return {"ok": True, "revoked": removed}

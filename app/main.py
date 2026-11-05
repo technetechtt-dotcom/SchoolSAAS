@@ -295,6 +295,7 @@ def startup():
         import app.learner_journey  # noqa: F401 — register journey tables on Base.metadata
         import app.onboarding  # noqa: F401
         import app.letter_workflow  # noqa: F401
+        import app.account_security  # noqa: F401
         Base.metadata.create_all(engine)
         _ensure_sqlite_user_mfa_columns()
         _ensure_sqlite_columns()
@@ -520,6 +521,11 @@ def login(data:Login,response:Response,request:Request,s:Session=Depends(db)):
         return {'mfa_required': True, 'mfa_token': issue_mfa_pending(user.id, school.id),
                 'school': school.name, 'role': mem.role}
     token=issue_token(user.id,school.id,s,request)
+    try:
+        from app.account_security import record_security_event
+        record_security_event(s, user.id, school.id, 'login_success', 'Password sign-in', email_user=False)
+    except Exception:
+        pass
     s.commit()
     response.set_cookie('session',token,httponly=True,secure=os.getenv('COOKIE_SECURE','false')=='true',samesite='lax',max_age=28800)
     return {'school':school.name,'role':mem.role,'mfa_required':False}
@@ -926,6 +932,8 @@ from app.letter_workflow import router as letter_workflow_router
 app.include_router(letter_workflow_router)
 from app.session_security import router as session_security_router
 app.include_router(session_security_router)
+from app.account_security import router as account_security_router
+app.include_router(account_security_router)
 from app.privacy_requests import router as privacy_requests_router
 app.include_router(privacy_requests_router)
 
