@@ -822,7 +822,7 @@ async function openAction(action,id){
  case "invite-parent":name="Invite parent acknowledgement";kind="parent-portal/invite";body=input("learner_id","Learner ID","number","","required")+input("email","Guardian email","email","","required")+input("subject","Subject","text","SchoolCare notice","required")+'<p class="subtle">If SMTP is not configured, a private token will be shown for secure sharing.</p>';break;
  case "view-evidence":await openEvidence(id,"inline");return;
  case "download-evidence":await openEvidence(id,"attachment");return;
- case "start-checkout":{const r=await api("billing/invoices/"+id+"/checkout","POST",{});toast(r.message||"Checkout started");navigate("billing");return}
+ case "start-checkout":{const r=await api("billing/invoices/"+id+"/checkout","POST",{});if(r.authorization_url){const target=new URL(r.authorization_url);if(target.protocol!=="https:"||target.hostname!=="checkout.paystack.com")throw Error("Unexpected payment destination");window.location.assign(target.href);return}toast(r.message||"Checkout started");navigate("billing");return}
  case "simulate-pay":{
   const invoices=await api("billing/invoices");
   const inv=invoices.find(x=>String(x.id)===String(id));
