@@ -32,6 +32,19 @@ with sync_playwright() as playwright:
     page.locator('#dialog input[name="class_name"]').fill("5A")
     page.locator('#dialog button[type="submit"]').click()
     page.get_by_role("button",name="Demo Student").wait_for(timeout=15000)
+    # Check representative administrator pages with a real browser session.
+    for route,title in [
+        ("incidents","Incidents"),("cases","Cases"),
+        ("hearings","Disciplinary hearings"),("evidence","Evidence files"),
+        ("reports","Reports"),("staff","Staff & access"),
+        ("settings","School settings"),("security","Security & MFA"),
+        ("privacy","Privacy & retention"),("billing","Billing")
+    ]:
+        page.locator(f'#nav [data-go="{route}"]').click()
+        page.get_by_role("heading",name=title,exact=True).wait_for(timeout=10000)
+        assert "Unable to load page" not in page.locator("#page").inner_text()
+    page.locator('#nav [data-go="learners"]').click()
+    page.get_by_role("heading",name="Learners",exact=True).wait_for(timeout=10000)
     page.set_viewport_size({"width":390,"height":844})
     page.locator("#menu-toggle").click()
     assert page.locator("#sidebar").evaluate("(node)=>node.classList.contains('open')")
