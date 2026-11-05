@@ -456,7 +456,7 @@ async function privacyPage(){
 }
 async function billingPage(){
  const d=await api("billing/invoices");$("page").innerHTML=head("Billing","Local invoice stubs — no payment gateway connected",btn("Issue invoice","create-invoice","",false))+
- panel(table(["ID","Amount","Status","Description","Actions"],d.map(x=>[plain(x.id),plain((x.amount_cents/100).toFixed(2)+" "+x.currency),pill(x.status),plain(x.description),x.status==="issued"?btn("Mark paid","mark-paid",x.id):""])));
+ panel(table(["ID","Amount","Status","Description","Actions"],d.map(x=>[plain(x.id),plain((x.amount_cents/100).toFixed(2)+" "+x.currency),pill(x.status),plain(x.description),x.status==="issued"&&user.platform_admin?btn("Reconcile manually","mark-paid",x.id):""])));
 }
 async function platformPage(){
  const [schools,health]=await Promise.all([api("platform/schools"),api("platform/health")]);
