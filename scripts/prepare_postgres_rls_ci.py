@@ -18,4 +18,5 @@ with psycopg.connect(dsn,autocommit=True) as conn:
     conn.execute("GRANT USAGE ON SCHEMA public TO schoolcare_ci_app")
     conn.execute("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO schoolcare_ci_app")
     conn.execute("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO schoolcare_ci_app")
+    conn.execute("REVOKE UPDATE,DELETE ON audit_events FROM schoolcare_ci_app")
 print("RLS enabled and non-superuser CI role provisioned")
