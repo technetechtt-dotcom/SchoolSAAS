@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
-from app import main, account_recovery
+from app import main, mailer
 
 def test_password_recovery(monkeypatch):
     engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool)
@@ -16,7 +16,7 @@ def test_password_recovery(monkeypatch):
         with Session() as s:yield s
     main.app.dependency_overrides[main.db]=db
     delivered={}
-    monkeypatch.setattr(account_recovery,"send_email",lambda destination,token:delivered.update(email=destination,token=token))
+    monkeypatch.setattr(mailer,"send_email",lambda destination,subject,body:delivered.update(email=destination,subject=subject,body=body))
     for key in ("SMTP_HOST","SMTP_USERNAME","SMTP_PASSWORD","SMTP_FROM","APP_PUBLIC_URL"):
         monkeypatch.setenv(key,"test-value")
     try:
@@ -29,7 +29,7 @@ def test_password_recovery(monkeypatch):
         response=post("/api/account-recovery/request",{"email":"owner@example.test"})
         assert response.status_code==200
         assert delivered["email"]=="owner@example.test"
-        token=delivered["token"]
+        token=delivered["body"].split("#reset=",1)[1].split()[0]
         assert post("/api/account-recovery/complete",{"token":token,"password":"new-test-password-34"}).status_code==200
         assert post("/api/account-recovery/complete",{"token":token,"password":"another-password"}).status_code==400
         old=TestClient(main.app)
