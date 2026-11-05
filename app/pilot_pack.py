@@ -182,21 +182,21 @@ def platform_user(s: Session, ctx: dict):
 
 def billing_gateway_status() -> dict:
     provider = (os.getenv("BILLING_GATEWAY") or "none").strip().lower()
-    secret = (os.getenv("BILLING_WEBHOOK_SECRET") or "").strip()
-    connected = provider == "sandbox" and bool(secret)
-    production_ready = provider not in {"", "none", "sandbox"} and bool(secret)
-    return {
-        "provider": provider if provider != "none" else None,
-        "connected": connected,
-        "production_payments_enabled": False,  # live provider not connected in this build
-        "message": (
-            "Sandbox only — production card processing remains disabled until a verified provider is connected."
-            if connected else
-            "Payment processing disabled. Set BILLING_GATEWAY=sandbox and BILLING_WEBHOOK_SECRET for sandbox tests only."
-            if not production_ready else
-            "Unknown provider configured; live settlement is still disabled in this build."
-        ),
-    }
+    if provider=="sandbox":
+        connected=bool(os.getenv("BILLING_WEBHOOK_SECRET","").strip())
+        return {"provider":"sandbox","connected":connected,
+            "production_payments_enabled":False,
+            "message":"Test-only payments. Never use sandbox confirmations as live settlement."}
+    if provider=="paystack":
+        from app.paystack_integration import configured
+        connected=configured()
+        return {"provider":"paystack","connected":connected,
+            "production_payments_enabled":connected and os.getenv("PAYSTACK_SECRET_KEY","").startswith("sk_live_"),
+            "message":("Paystack configuration detected. Verify merchant onboarding and test webhooks before going live."
+                       if connected else "Set PAYSTACK_SECRET_KEY and PAYSTACK_WEBHOOK_SECRET in the secure environment.")}
+    return {"provider":provider if provider!="none" else None,"connected":False,
+        "production_payments_enabled":False,
+        "message":"No verified payment provider configured."}
 
 
 def _parent_access_from_token(s: Session, token: str) -> ParentAccess:
@@ -860,7 +860,7 @@ def list_invoices(s: Session = Depends(m.db), ctx=Depends(m.require("school_admi
 def create_invoice(data: InvoiceIn, s: Session = Depends(m.db), ctx=Depends(m.require("school_admin"))):
     gw = billing_gateway_status()
     item = Invoice(school_id=ctx["sid"], amount_cents=data.amount_cents, description=data.description,
-                   status="issued", gateway="sandbox" if gw["connected"] else "none")
+                   status="issued", gateway=gw["provider"] if gw["connected"] else "none")
     s.add(item); s.flush(); m.log(s, ctx, "create", "invoice", item.id); s.commit()
     msg = ("Invoice issued. Start checkout to obtain a payment reference; confirmation requires a signed webhook."
            if gw["connected"] else
@@ -873,6 +873,9 @@ def start_checkout(invoice_id: int, s: Session = Depends(m.db), ctx=Depends(m.re
     gw = billing_gateway_status()
     if not gw["connected"]:
         raise HTTPException(503, "Payment gateway is not connected")
+    if gw["provider"]=="paystack":
+        from app.paystack_integration import checkout
+        return checkout(invoice_id,s,ctx)
     item = s.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.school_id == ctx["sid"]))
     if not item:
         raise HTTPException(404, "Invoice not found")
