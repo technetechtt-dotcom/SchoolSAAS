@@ -799,6 +799,8 @@ from app.learner_journey import router as journey_router
 app.include_router(journey_router)
 from app.intervention_recommend import router as recommend_router
 app.include_router(recommend_router)
+from app.privacy_requests import router as privacy_requests_router
+app.include_router(privacy_requests_router)
 
 @app.delete('/api/audit/{event_id}')
 def delete_audit_blocked(event_id: int):
