@@ -101,3 +101,36 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://schoolcare_ci_app:ci-app-only-password@localhost:5432/schoolcare
         run: python -m pytest -q tests/test_postgres_rls.py
+
+  cross-browser:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt playwright
+      - run: python -m playwright install --with-deps ${{ matrix.engine }}
+      - name: Verify workflow in alternate browser engine
+        env:
+          JWT_SECRET: cross-browser-testing-only-secret
+          DATABASE_URL: sqlite:////tmp/schoolcare-cross-browser.db
+          SCHEMA_AUTO_CREATE: 'true'
+          SCHOOLCARE_URL: http://127.0.0.1:8000
+          BROWSER_ENGINE: ${{ matrix.engine }}
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/schoolcare-browser.log 2>&1 &
+          python - <<'PY'
+          import urllib.request, time
+          for _ in range(45):
+              try:
+                  urllib.request.urlopen('http://127.0.0.1:8000',timeout=1)
+                  break
+              except Exception:time.sleep(1)
+          else:raise RuntimeError('Test server failed to start')
+          PY
+          python tests/browser_smoke.py
