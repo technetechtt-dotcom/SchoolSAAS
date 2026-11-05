@@ -34,7 +34,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(250))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    mfa_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mfa_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 class Membership(Base):
     __tablename__ = 'memberships'
