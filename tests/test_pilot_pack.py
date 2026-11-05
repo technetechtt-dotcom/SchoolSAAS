@@ -97,7 +97,12 @@ def test_pilot_pack_mfa_conduct_hearing_billing_platform(tmp_path):
         assert send(f"/api/hearings/{hearing.json()['id']}", {
             "status":"completed","outcome":""}, "patch").status_code == 422
         assert send(f"/api/hearings/{hearing.json()['id']}", {
-            "status":"completed","outcome":"Human reviewed outcome: support plan"}, "patch").status_code == 200
+            "status":"completed","outcome":"Human reviewed outcome: support plan"}, "patch").status_code == 422
+        assert send(f"/api/hearings/{hearing.json()['id']}", {
+            "status":"completed","outcome":"Human reviewed outcome: support plan",
+            "participants":"Principal, HOD, guardian",
+            "attendance_notes":"All parties present",
+            "procedural_checks":"Notice served; learner heard; outcome explained"}, "patch").status_code == 200
 
         up = c.post("/api/evidence",
                     data={"incident_id": str(incident.json()["id"])},

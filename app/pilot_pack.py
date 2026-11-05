@@ -44,6 +44,9 @@ class Hearing(m.Base):
     outcome: Mapped[str] = mapped_column(String(200), default="pending")
     notes: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(40), default="scheduled")
+    participants: Mapped[str] = mapped_column(Text, default="")
+    attendance_notes: Mapped[str] = mapped_column(Text, default="")
+    procedural_checks: Mapped[str] = mapped_column(Text, default="")
 
 
 class EvidenceFile(m.Base):
@@ -238,12 +241,16 @@ class HearingIn(BaseModel):
     scheduled_at: str
     chair: str = Field(min_length=2, max_length=120)
     notes: str = Field(default="", max_length=4000)
+    participants: str = Field(default="", max_length=4000)
 
 
 class HearingPatch(BaseModel):
     status: str = Field(min_length=2, max_length=40)
     outcome: str = Field(default="", max_length=200)
     notes: str = Field(default="", max_length=4000)
+    participants: str = Field(default="", max_length=4000)
+    attendance_notes: str = Field(default="", max_length=4000)
+    procedural_checks: str = Field(default="", max_length=4000)
 
 
 class TemplateIn(BaseModel):
@@ -402,11 +409,29 @@ def get_conduct(version_id: int, s: Session = Depends(m.db), ctx=Depends(m.requi
 
 
 # --- Hearings ---------------------------------------------------------------
+def _hearing_out(x: Hearing):
+    return {
+        "id": x.id, "case_id": x.case_id, "scheduled_at": x.scheduled_at.isoformat(), "chair": x.chair,
+        "status": x.status, "outcome": x.outcome, "notes": x.notes or "",
+        "participants": getattr(x, "participants", "") or "",
+        "attendance_notes": getattr(x, "attendance_notes", "") or "",
+        "procedural_checks": getattr(x, "procedural_checks", "") or "",
+    }
+
+
 @router.get("/hearings")
 def list_hearings(s: Session = Depends(m.db), ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
     rows = s.scalars(select(Hearing).where(Hearing.school_id == ctx["sid"]).order_by(Hearing.scheduled_at.desc())).all()
-    return [{"id": x.id, "case_id": x.case_id, "scheduled_at": x.scheduled_at.isoformat(), "chair": x.chair,
-             "status": x.status, "outcome": x.outcome} for x in rows]
+    return [_hearing_out(x) for x in rows]
+
+
+@router.get("/hearings/{hearing_id}")
+def get_hearing(hearing_id: int, s: Session = Depends(m.db),
+                ctx=Depends(m.require("school_admin", "principal", "smt", "hod"))):
+    item = s.scalar(select(Hearing).where(Hearing.id == hearing_id, Hearing.school_id == ctx["sid"]))
+    if not item:
+        raise HTTPException(404, "Hearing not found")
+    return _hearing_out(item)
 
 
 @router.post("/hearings", status_code=201)
@@ -418,7 +443,8 @@ def add_hearing(data: HearingIn, s: Session = Depends(m.db), ctx=Depends(m.requi
         when = datetime.fromisoformat(data.scheduled_at.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(400, "scheduled_at must be ISO datetime")
-    item = Hearing(school_id=ctx["sid"], case_id=data.case_id, scheduled_at=when, chair=data.chair, notes=data.notes)
+    item = Hearing(school_id=ctx["sid"], case_id=data.case_id, scheduled_at=when, chair=data.chair,
+                   notes=data.notes, participants=data.participants.strip())
     s.add(item); s.flush(); m.log(s, ctx, "create", "hearing", item.id); s.commit()
     return {"id": item.id}
 
@@ -434,8 +460,22 @@ def patch_hearing(hearing_id: int, data: HearingPatch, s: Session = Depends(m.db
         raise HTTPException(400,"Invalid hearing status")
     if item.status in ("completed","cancelled") and data.status!=item.status:
         raise HTTPException(409,"Concluded hearing cannot be reopened without a formal review")
-    if data.status=="completed" and not data.outcome.strip():
-        raise HTTPException(422,"A documented human-reviewed outcome is required")
+    if data.participants.strip():
+        item.participants = data.participants.strip()
+    if data.attendance_notes.strip():
+        item.attendance_notes = data.attendance_notes.strip()
+    if data.procedural_checks.strip():
+        item.procedural_checks = data.procedural_checks.strip()
+    if data.status=="completed":
+        if not data.outcome.strip() and not (item.outcome or "").strip():
+            raise HTTPException(422,"A documented human-reviewed outcome is required")
+        attendance = (data.attendance_notes or item.attendance_notes or "").strip()
+        participants = (data.participants or item.participants or "").strip()
+        checks = (data.procedural_checks or item.procedural_checks or "").strip()
+        if not attendance or not participants:
+            raise HTTPException(422,"Attendance notes and participants are required before completing a hearing")
+        if not checks:
+            raise HTTPException(422,"Record procedural checks before completing a hearing")
     previous=item.status
     item.status = data.status
     if data.outcome:
@@ -449,7 +489,7 @@ def patch_hearing(hearing_id: int, data: HearingPatch, s: Session = Depends(m.db
             note="Hearing status: "+previous+" → "+data.status+
                  (". Outcome recorded by authorised staff." if data.outcome.strip() else "")))
     m.log(s, ctx, "update", "hearing", item.id); s.commit()
-    return {"id": item.id, "status": item.status, "outcome": item.outcome}
+    return _hearing_out(item)
 
 
 # --- Evidence ---------------------------------------------------------------

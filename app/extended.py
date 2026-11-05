@@ -68,6 +68,7 @@ class DocIn(BaseModel):
 class InterventionUpdate(BaseModel):
     outcome:str
     notes:str=Field(default="",max_length=2000)
+    due_at:datetime|None=None
 class CaseAssign(BaseModel):
     assigned_user_id:int|None=None
 
@@ -148,8 +149,12 @@ def update_intervention(intervention_id:int,data:InterventionUpdate,s:Session=De
     if data.outcome not in ("pending","improved","partially_improved","no_improvement","follow_up","closed"):
         raise HTTPException(400,"Invalid intervention outcome")
     x.outcome=data.outcome;x.notes=data.notes
+    if data.due_at is not None:
+        if data.due_at.tzinfo is None:
+            raise HTTPException(422,"due_at must include a time zone")
+        x.due_at=data.due_at
     m.log(s,ctx,"update","intervention",x.id);s.commit()
-    return {"ok":True}
+    return {"ok":True,"due_at":x.due_at.isoformat() if x.due_at else None}
 
 @router.get("/classes")
 def classes(s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):

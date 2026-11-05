@@ -169,11 +169,15 @@ const schoolOffences=async()=>api("offences");
 async function dashboard(){
  if(user.role==="educator"){const inc=await api("incidents");$("page").innerHTML=head("Your classroom hub","Capture concerns early and keep support moving",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+ '<div class="cards"><div class="metric"><small>My reported incidents</small><strong>'+inc.length+'</strong></div><div class="metric"><small>My assigned class</small><strong>'+esc(user.assigned_class||"Not assigned")+'</strong></div></div>'+panel(table(["Incident","Status","Date"],inc.slice(0,12).map(x=>[link("#"+x.id,"incidents",x.id),pill(x.status),plain(x.created_at.slice(0,10))])),"Recent reports");return}
  const [d,n,stats,warn,hot,reps,irec]=await Promise.all([api("dashboard/aggregates"),api("notifications"),api("analytics/overview"),api("analytics/early-warning"),api("analytics/hotspots"),api("analytics/repeats"),api("analytics/intervention-recommendations")]);
+ const metric=(label,value,go)=>'<button type="button" class="metric" data-go="'+esc(go)+'" style="text-align:left;cursor:pointer;width:100%"><small>'+esc(label)+'</small><strong>'+esc(value)+'</strong></button>';
  $("page").innerHTML=head("Good day, "+d.school,"Capture once — history, reviews, interventions and trends update automatically",btn("Report incident","create-incident","",false)+btn("What do I do?","go-guide"))+
- '<div class="cards"><div class="metric"><small>Learners</small><strong>'+d.learners+'</strong></div><div class="metric"><small>Incidents</small><strong>'+d.incidents+'</strong></div><div class="metric"><small>Open cases</small><strong>'+d.open_cases+'</strong></div></div>'+
- '<div class="cards"><div class="metric"><small>Early warning · overdue interventions</small><strong>'+warn.counts.overdue_interventions+'</strong></div><div class="metric"><small>Outstanding parent meetings</small><strong>'+warn.counts.overdue_appointments+'</strong></div><div class="metric"><small>Auto intervention needs</small><strong>'+esc((irec.counts&&irec.counts.learners_flagged)||0)+'</strong></div><div class="metric"><small>Serious / open reviews</small><strong>'+warn.counts.serious_open+' / '+warn.counts.open_reviews+'</strong></div></div>'+
+ '<div class="cards">'+metric("Learners",d.learners,"learners")+metric("Incidents",d.incidents,"incidents")+metric("Open cases",d.open_cases,"cases")+'</div>'+
+ '<div class="cards">'+metric("Early warning · overdue interventions",warn.counts.overdue_interventions,"interventions")+metric("Outstanding parent meetings",warn.counts.overdue_appointments,"appointments")+metric("Auto intervention needs",(irec.counts&&irec.counts.learners_flagged)||0,"learners")+metric("Serious / open reviews",warn.counts.serious_open+" / "+warn.counts.open_reviews,"tasks")+'</div>'+
+ panel(table(["Intervention","Incident","Due","Outcome"],(warn.overdue_interventions||[]).slice(0,8).map(x=>[
+  link("#"+x.id,"interventions"),link("#"+x.incident_id,"incidents",x.incident_id),plain((x.due_at||"").slice(0,10)),pill(x.outcome)
+ ])),"Overdue interventions — assigned follow-up")+
  '<div class="grid2">'+panel(table(["Location","Incidents"],Object.entries(hot.by_location||d.locations).map(x=>[plain(x[0]),plain(x[1])])),"Hotspots · locations ("+esc(hot.window_days)+" days)")+
- panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Action required")+'</div>'+
+ panel(table(["Review","Due"],n.slice(0,8).map(x=>[link(x.title+" (#"+x.incident_id+")","incidents",x.incident_id),plain(x.due_at.slice(0,10))])),"Assigned review tasks")+'</div>'+
  '<div class="cards"><div class="metric"><small>Repeat-behaviour rate</small><strong>'+stats.repeat_rate+'%</strong></div><div class="metric"><small>Interventions recorded</small><strong>'+stats.interventions+'</strong></div><div class="metric"><small>Pending reviews</small><strong>'+stats.pending_reviews+'</strong></div></div>'+
  '<div class="grid2">'+panel(bars(stats.months),"Monthly trend")+panel(bars(stats.severity),"Severity levels")+'</div>'+
  '<div class="grid2">'+panel(bars(hot.by_class||{}),"Hotspots · classes")+
@@ -276,10 +280,10 @@ async function listPage(key){
  cases:["Cases","Manage formal cases and linked learner incidents","cases",["title","status","id"],["Case","Title","Status","Learner"]],
  offences:["Offence catalogue","School-specific behaviour classifications","offences",["name","code","category"],["Code","Offence","Category","Level"]],
  staff:["Staff & access","Invite staff and manage roles and class assignments","members",["email","role","assigned_class"],["Email","Role","Class","Status"]],
- interventions:["Interventions","Track actions and outcomes, not just incidents","interventions",["type","outcome","notes"],["ID","Incident","Type","Outcome"]],
+ interventions:["Interventions","Track actions and outcomes, not just incidents","interventions",["type","outcome","notes"],["ID","Incident","Type","Outcome","Due"]],
  contacts:["Parent communications","Document communications with guardians","parent-contacts",["purpose","method","outcome"],["Learner","Method","Purpose","Outcome"]],
  tasks:["Review tasks","Action urgent and repeated behaviour referrals","review-tasks",["reason","status"],["Incident","Reason","Due","Status"]],
- appeals:["Appeals & reviews","Track challenges, review and outcomes","appeals",["reason","status"],["Case","Reason","Status"]],
+ appeals:["Appeals & reviews","Track challenges, review and outcomes","appeals",["reason","status"],["Case","Hearing","Reason","Status"]],
  appointments:["Meetings","Schedule and record guardian meetings","appointments",["title","status"],["Learner","Meeting","Date","Status"]],
  documents:["Document drafts","Store school-approved correspondence drafts","documents",["title","document_type"],["Learner","Title","Type","Date"]],
  classes:["Grades & classes","Current class allocation derived from learner records","classes",["grade","class_name"],["Grade","Class","Learners"]],
@@ -298,10 +302,10 @@ async function listPage(key){
  case "cases":return [link("#"+x.id,"cases",x.id),plain(x.title),pill(x.status),link("#"+x.learner_id,"learners",x.learner_id)];
  case "offences":return [plain(x.code),plain(x.name),plain(x.category),["school_admin","principal","smt"].includes(user.role)?btn(String(x.severity)+" · Edit","edit-offence",x.id):pill(x.severity)];
  case "staff":return [plain(x.email),plain(x.role),plain(x.assigned_class||"—"),btn(x.active?"Edit":"Inactive","edit-member",x.id)];
- case "interventions":return [plain(x.id),link("#"+x.incident_id,"incidents",x.incident_id),plain(x.type),btn(x.outcome,"edit-intervention",x.id)];
+ case "interventions":return [plain(x.id),link("#"+x.incident_id,"incidents",x.incident_id),plain(x.type),btn(x.outcome,"edit-intervention",x.id),plain(x.due_at?x.due_at.slice(0,10):"—")];
  case "contacts":return [link("#"+x.learner_id,"learners",x.learner_id),plain(x.method),plain(x.purpose),plain(x.outcome)];
  case "tasks":return [link("#"+x.incident_id,"incidents",x.incident_id),plain(x.reason),plain(x.due_at.slice(0,10)),btn(x.status,"edit-task",x.id)];
- case "appeals":return [link("#"+x.case_id,"cases",x.case_id),plain(x.reason.slice(0,85)),btn(x.status,"edit-appeal",x.id)];
+ case "appeals":return [link("#"+x.case_id,"cases",x.case_id),plain(x.hearing_id?"Hearing #"+x.hearing_id:"—"),plain(x.reason.slice(0,85)),btn(x.status,"edit-appeal",x.id)];
  case "appointments":return [link("#"+x.learner_id,"learners",x.learner_id),plain(x.title),plain(x.scheduled_at.slice(0,16)),btn(x.status,"edit-appointment",x.id)];
  case "documents":return [link("#"+x.learner_id,"learners",x.learner_id),btn(x.title,"view-document",x.id),plain(x.document_type),plain(x.created_at.slice(0,10))];
  case "classes":return ['<button type="button" class="linkbtn" data-open-grade="'+esc(x.grade)+'">Grade '+esc(x.grade)+'</button>',plain(x.class_name),plain(x.learners)];
@@ -316,8 +320,16 @@ async function details(key,id){
  if(key==="learners"){
  const items=[["Admission",d.admission_no],["Grade",d.grade],["Class",d.class_name],["Status",d.active?"Active":"Inactive"],
   ["Started grade",d.grade_started||"—"],["Enrolled from",d.enrolled_on||"—"]];
- let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,(user.role==="educator"?"":btn("Edit learner","edit-learner",d.id))+(manager()?btn("Add journey note","add-observation",d.id):""));
+ let content=breadcrumb+head(d.first_name+" "+d.surname,"Learner #"+d.id,(user.role==="educator"?"":btn("Edit learner","edit-learner",d.id))+(manager()?btn("Add journey note","add-observation",d.id)+btn("Change placement","change-placement",d.id):""));
  content+=panel(table(["Field","Value"],items.map(x=>[plain(x[0]),plain(x[1])])),"Learner information");
+ if(manager()){
+  try{
+   const places=await api("learners/"+d.id+"/placements");
+   const placeRows=(places||[]).map(x=>[plain(x.effective_on),plain(x.grade),plain(x.class_name),pill(x.reason),plain(x.notes||"—")]);
+   content+=panel(placeRows.length?table(["Effective","Grade","Class","Reason","Notes"],placeRows):
+    '<div class="empty">No placement history yet. Use Change placement for promotion, transfer, withdrawal or re-enrolment.</div>',"Placement history");
+  }catch(e){content+=panel('<p class="subtle">'+esc(e.message)+'</p>',"Placement history")}
+ }
  if(manager()){
   try{
    const j=await api("learners/"+d.id+"/journey");
@@ -432,8 +444,10 @@ async function conductPage(){
   (x.approved?"":btn("Approve","approve-conduct",x.id))+btn("Open","view-conduct",x.id)])));
 }
 async function hearingsPage(){
- const d=await api("hearings");$("page").innerHTML=head("Disciplinary hearings","Human-led hearing register — no automated sanctions",btn("Schedule hearing","create-hearing","",false))+
- panel(table(["ID","Case","When","Chair","Status","Outcome","Actions"],d.map(x=>[plain(x.id),link("Case #"+x.case_id,"cases",x.case_id),plain(x.scheduled_at.slice(0,16).replace("T"," ")),plain(x.chair),pill(x.status),plain(x.outcome),btn("Update","edit-hearing",x.id)])));
+ const d=await api("hearings");$("page").innerHTML=head("Disciplinary hearings","Human-led hearing register — attendance and procedural checks required before completion",btn("Schedule hearing","create-hearing","",false))+
+ panel(table(["ID","Case","When","Chair","Attendance","Status","Outcome","Actions"],d.map(x=>[
+  plain(x.id),link("Case #"+x.case_id,"cases",x.case_id),plain(x.scheduled_at.slice(0,16).replace("T"," ")),plain(x.chair),
+  plain(x.attendance_notes? "Recorded":"Pending"),pill(x.status),plain(x.outcome||"—"),btn("Update","edit-hearing",x.id)])));
 }
 async function evidencePage(){
  const d=await api("evidence");$("page").innerHTML=head("Evidence files","School-scoped uploads for incidents or cases — downloads are access-logged",btn("Upload evidence","upload-evidence","",false))+
@@ -593,11 +607,25 @@ async function openAction(action,id){
   recPref={type:itype,incidentId:String(iid),notes:"Accepted auto-recommendation for learner #"+lid+": "+itype+" (staff confirmed)."};
   await openAction("create-intervention");
   return;}
- case "edit-intervention":data=(await api("interventions")).find(x=>String(x.id)===String(id));name="Update intervention";kind="intervention-update:"+id;body=options("outcome","Outcome",["pending","improved","partially_improved","no_improvement","follow_up","closed"].map(x=>[x,x]),data.outcome)+area("notes","Notes",data.notes);break;
+ case "edit-intervention":data=(await api("interventions")).find(x=>String(x.id)===String(id));name="Update intervention";kind="intervention-update:"+id;body=options("outcome","Outcome",["pending","improved","partially_improved","no_improvement","follow_up","closed"].map(x=>[x,x]),data.outcome)+input("due_at","Follow-up due","datetime-local",data.due_at?data.due_at.slice(0,16):"")+area("notes","Notes",data.notes||"");break;
  case "create-contact":name="Log parent contact";kind="parent-contacts";body=await learnerPicker()+options("method","Method",["Phone","Email","Meeting","Letter"].map(x=>[x,x]))+input("purpose","Purpose","text","","required")+input("outcome","Outcome","text","","required");break;
  case "edit-task":data=(await api("review-tasks")).find(x=>String(x.id)===String(id));name="Update review task";kind="task-update:"+id;body=options("status","Task status",["open","in_progress","completed","cancelled"].map(x=>[x,x]),data.status);break;
- case "create-appeal":name="Record appeal";kind="appeals";body=options("case_id","Case",(await api("cases")).map(x=>[x.id,"Case #"+x.id+" · "+x.title]))+area("reason","Reason for review");break;
+ case "create-appeal":{
+  const [cases,hearings]=await Promise.all([api("cases"),api("hearings")]);
+  name="Record appeal";kind="appeals";
+  body=options("case_id","Case",cases.map(x=>[x.id,"Case #"+x.id+" · "+x.title]))+
+   options("hearing_id","Linked hearing (optional)",[[0,"None"]].concat(hearings.map(x=>[x.id,"Hearing #"+x.id+" · case "+x.case_id+" · "+x.status])))+
+   area("reason","Reason for review");
+  break;}
  case "edit-appeal":data=(await api("appeals")).find(x=>String(x.id)===String(id));name="Review appeal";kind="appeal-update:"+id;body=options("status","Status",["submitted","under_review","resolved","rejected"].map(x=>[x,x]),data.status)+area("outcome","Outcome",data.outcome);break;
+ case "change-placement":{
+  data=await api("learners/"+id);
+  name="Change learner placement";kind="learner-placement:"+id;
+  body="<p class=\"subtle\">Records promotion, transfer, withdrawal or re-enrolment history. Current: Grade "+esc(data.grade)+" / "+esc(data.class_name)+"</p>"+
+   input("grade","New grade","text",data.grade,"required")+input("class_name","New class","text",data.class_name,"required")+
+   options("reason","Reason",[["promotion","Promotion"],["transfer","Class transfer"],["withdrawal","Withdrawal"],["reenrolment","Re-enrolment"],["correction","Correction"]])+
+   input("effective_on","Effective on","date",new Date().toISOString().slice(0,10),"required")+area("notes","Notes");
+  break;}
  case "create-appointment":name="Schedule meeting";kind="appointments";body=await learnerPicker()+input("title","Meeting title","text","","required")+input("scheduled_at","Date and time","datetime-local","","required");break;
  case "edit-appointment":data=(await api("appointments")).find(x=>String(x.id)===String(id));name="Update meeting";kind="appointment-update:"+id;body=options("status","Status",["scheduled","completed","cancelled"].map(x=>[x,x]),data.status);break;
  case "create-document":name="Create document draft";kind="documents";body=await learnerPicker()+input("title","Document title","text","","required")+options("document_type","Document type",["letter","meeting_request","outcome","other"].map(x=>[x,x]))+area("body","Draft text (staff approval required)");break;
@@ -606,8 +634,17 @@ async function openAction(action,id){
  case "create-conduct":name="New Code of Conduct version";kind="conduct-versions";body=input("version_label","Version label","text","","required")+input("title","Title","text","","required")+input("effective_from","Effective from","datetime-local","","required")+area("body","Full text");break;
  case "approve-conduct":await api("conduct-versions/"+id+"/approve","PATCH",{});toast("Conduct version approved");navigate("conduct");return;
  case "view-conduct":data=await api("conduct-versions/"+id);modal(data.title,panel('<p class="subtle">'+esc(data.version_label)+" · "+esc(data.effective_from)+' · '+(data.approved?"approved":"draft")+'</p><pre style="white-space:pre-wrap">'+esc(data.body)+'</pre>'));return;
- case "create-hearing":name="Schedule hearing";kind="hearings";body=options("case_id","Case",(await api("cases")).map(x=>[x.id,"Case #"+x.id+" · "+x.title]))+input("scheduled_at","Date and time","datetime-local","","required")+input("chair","Chair","text","","required")+area("notes","Notes");break;
- case "edit-hearing":name="Update hearing";kind="hearing-update:"+id;body=options("status","Status",["scheduled","in_progress","adjourned","completed","cancelled"].map(x=>[x,x]))+input("outcome","Outcome","text")+area("notes","Notes");break;
+ case "create-hearing":name="Schedule hearing";kind="hearings";body=options("case_id","Case",(await api("cases")).map(x=>[x.id,"Case #"+x.id+" · "+x.title]))+input("scheduled_at","Date and time","datetime-local","","required")+input("chair","Chair","text","","required")+area("participants","Expected participants")+area("notes","Notes");break;
+ case "edit-hearing":{
+  data=await api("hearings/"+id);name="Update hearing";kind="hearing-update:"+id;
+  body=options("status","Status",["scheduled","in_progress","adjourned","completed","cancelled"].map(x=>[x,x]),data.status)+
+   input("outcome","Human-reviewed outcome","text",data.outcome||"")+
+   area("participants","Participants present",data.participants||"")+
+   area("attendance_notes","Attendance notes",data.attendance_notes||"")+
+   area("procedural_checks","Procedural checks completed",data.procedural_checks||"")+
+   area("notes","Notes",data.notes||"")+
+   '<p class="subtle">Completion requires participants, attendance notes, procedural checks and a human outcome.</p>';
+  break;}
  case "upload-evidence":name="Upload evidence";kind="upload-evidence";body=input("incident_id","Incident ID (optional)","number")+input("case_id","Case ID (optional)","number")+'<div><label for="evidence-file">File</label><input id="evidence-file" name="file" type="file" required></div>';break;
  case "create-letter":name="New letter template";kind="letter-templates";body=input("code","Code","text","","required")+input("name","Name","text","","required")+area("body","Body (use {{learner_name}}, {{grade}}, {{class_name}}, {{school}}, {{date}})");break;
  case "render-letter":name="Render letter draft";kind="render-letter:"+id;body=input("learner_id","Learner ID","number","","required");break;
@@ -660,10 +697,12 @@ async function submitForm(f){
  try{
  let k=f.dataset.form,data=getData(f),url=k,method="POST",go=path().split("/")[0];
  const split=k.split(":");const id=split[1];const prefix=split[0];
- const intFields=["learner_id","offence_id","incident_id","severity","case_id","repeat_threshold","assigned_user_id"];
+ const intFields=["learner_id","offence_id","incident_id","severity","case_id","repeat_threshold","assigned_user_id","hearing_id"];
  for(const field of [...intFields,"owner_user_id","user_id"])if(data[field]!==undefined&&data[field]!=="")data[field]=Number(data[field]);
  if(data.active!==undefined)data.active=data.active==="true";
+ if(data.hearing_id===0)data.hearing_id=null;
  if(prefix==="learner-update"){url="learners/"+id;method="PATCH";go="learners/"+id}
+ if(prefix==="learner-placement"){url="learners/"+id+"/placements";go="learners/"+id}
  if(prefix==="learner-observation"){
   url="learners/"+id+"/observations";go="learners/"+id;
   data.learner_id=Number(id);
@@ -680,7 +719,7 @@ async function submitForm(f){
  if(k==="guardians")go="learners/"+data.learner_id;
  if(k==="class-assignments")go="class-assignments";
  if(prefix==="offence-update"){url="offences/"+id;method="PATCH";data.severity=Number(data.severity);go="offences"}
- if(prefix==="intervention-update"){url="interventions/"+id;method="PATCH";go="interventions"}
+ if(prefix==="intervention-update"){url="interventions/"+id;method="PATCH";go="interventions";if(data.due_at)data.due_at=new Date(data.due_at).toISOString();else delete data.due_at}
  if(prefix==="task-update"){url="review-tasks/"+id;method="PATCH";go="tasks"}
  if(prefix==="appeal-update"){url="appeals/"+id;method="PATCH";go="appeals"}
  if(prefix==="appointment-update"){url="appointments/"+id;method="PATCH";go="appointments"}

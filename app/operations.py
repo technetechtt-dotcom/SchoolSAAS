@@ -57,6 +57,20 @@ class ClassAssignment(m.Base):
     user_id:Mapped[int]=mapped_column(ForeignKey("users.id"),index=True)
     class_name:Mapped[str]=mapped_column(String(30))
 
+class LearnerPlacement(m.Base):
+    """Historical grade/class placements for promotions, transfers and withdrawals."""
+    __tablename__="learner_placements"
+    id:Mapped[int]=mapped_column(primary_key=True)
+    school_id:Mapped[int]=mapped_column(ForeignKey("schools.id"),index=True)
+    learner_id:Mapped[int]=mapped_column(ForeignKey("learners.id"),index=True)
+    grade:Mapped[str]=mapped_column(String(25))
+    class_name:Mapped[str]=mapped_column(String(30))
+    reason:Mapped[str]=mapped_column(String(40),default="enrolment")  # enrolment|promotion|transfer|withdrawal|reenrolment|correction
+    notes:Mapped[str]=mapped_column(Text,default="")
+    effective_on:Mapped[date]=mapped_column(default=lambda:date.today())
+    recorded_by:Mapped[int]=mapped_column(ForeignKey("users.id"))
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+
 class GuardianIn(BaseModel):
     learner_id:int
     name:str=Field(min_length=2,max_length=150)
@@ -79,6 +93,13 @@ class FollowUpUpdate(BaseModel):
 class ClassAssignmentIn(BaseModel):
     user_id:int
     class_name:str=Field(min_length=1,max_length=30)
+
+class PlacementIn(BaseModel):
+    grade:str=Field(min_length=1,max_length=25)
+    class_name:str=Field(min_length=1,max_length=30)
+    reason:str=Field(default="transfer",max_length=40)
+    notes:str=Field(default="",max_length=2000)
+    effective_on:date|None=None
 
 def member(s,user_id,sid):
     found=s.scalar(select(m.Membership).where(m.Membership.school_id==sid,m.Membership.user_id==user_id,m.Membership.active==True))
@@ -158,6 +179,45 @@ def assign_class(data:ClassAssignmentIn,s:Session=Depends(m.db),ctx=Depends(m.re
 def unassign_class(assignment_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*ADMIN))):
     x=school_record(s,ClassAssignment,assignment_id,ctx["sid"])
     s.delete(x);m.log(s,ctx,"delete","class_assignment",assignment_id);s.commit();return {"ok":True}
+
+def _record_placement(s,ctx,learner,reason,notes="",effective_on=None):
+    item=LearnerPlacement(
+        school_id=ctx["sid"],learner_id=learner.id,grade=learner.grade,class_name=learner.class_name,
+        reason=reason,notes=notes.strip(),effective_on=effective_on or date.today(),recorded_by=ctx["uid"])
+    s.add(item);s.flush()
+    return item
+
+
+@router.get("/learners/{learner_id}/placements")
+def learner_placements(learner_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):
+    require_learner(s,learner_id,ctx["sid"])
+    rows=s.scalars(select(LearnerPlacement).where(
+        LearnerPlacement.school_id==ctx["sid"],LearnerPlacement.learner_id==learner_id
+    ).order_by(LearnerPlacement.effective_on.asc(),LearnerPlacement.id.asc())).all()
+    return [{"id":x.id,"grade":x.grade,"class_name":x.class_name,"reason":x.reason,"notes":x.notes,
+             "effective_on":x.effective_on.isoformat(),"recorded_by":x.recorded_by,
+             "created_at":x.created_at.isoformat()} for x in rows]
+
+
+@router.post("/learners/{learner_id}/placements",status_code=201)
+def change_placement(learner_id:int,data:PlacementIn,s:Session=Depends(m.db),
+                     ctx=Depends(m.require("school_admin","principal","smt","hod"))):
+    learner=require_learner(s,learner_id,ctx["sid"])
+    reason=data.reason.strip().lower()
+    if reason not in ("promotion","transfer","withdrawal","reenrolment","correction"):
+        raise HTTPException(400,"Invalid placement reason")
+    if reason=="withdrawal":
+        learner.active=False
+    elif reason=="reenrolment":
+        learner.active=True
+    previous=f"{learner.grade}/{learner.class_name}"
+    learner.grade=data.grade.strip()
+    learner.class_name=data.class_name.strip()
+    item=_record_placement(s,ctx,learner,reason,data.notes,data.effective_on)
+    m.log(s,ctx,"placement",reason,learner.id);s.commit()
+    return {"id":item.id,"learner_id":learner.id,"from":previous,
+            "to":f"{learner.grade}/{learner.class_name}","reason":reason,"active":learner.active}
+
 
 @router.get("/cases/{case_id}/closure-checklist")
 def case_closure_checklist(case_id:int,s:Session=Depends(m.db),ctx=Depends(m.require(*MANAGERS))):

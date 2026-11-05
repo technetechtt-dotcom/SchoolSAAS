@@ -223,6 +223,11 @@ def _ensure_sqlite_columns():
         'appeals': [
             ('hearing_id', 'INTEGER'),
         ],
+        'hearings': [
+            ('participants', 'TEXT DEFAULT \'\''),
+            ('attendance_notes', 'TEXT DEFAULT \'\''),
+            ('procedural_checks', 'TEXT DEFAULT \'\''),
+        ],
     }
     with engine.begin() as conn:
         for table, cols in planned.items():
