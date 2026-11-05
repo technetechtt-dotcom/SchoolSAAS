@@ -980,6 +980,8 @@ from app.directory_ops import router as directory_ops_router
 app.include_router(directory_ops_router)
 from app.teacher_capture import router as teacher_capture_router
 app.include_router(teacher_capture_router)
+from app.automation_workflows import router as automation_router
+app.include_router(automation_router)
 from app.mail_outbox import router as mail_outbox_router
 app.include_router(mail_outbox_router)
 from app.privacy_requests import router as privacy_requests_router
